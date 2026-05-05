@@ -1,0 +1,85 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pd-prep-for-pgdp"
+dynamic = ["version"]
+description = "Web app that converts scanned book images into a PGDP-ready submission package"
+authors = [
+    { name = "CT", email = "concavetrillion@gmail.com" }
+]
+readme = "README.md"
+license = { text = "Unlicense" }
+requires-python = ">=3.13,<4.0"
+dependencies = [
+    "pd-book-tools",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.5",
+    "python-multipart>=0.0.20",
+    "httpx>=0.28",
+    "huggingface_hub>=0.23",
+    "transformers>=4.45",
+    "sse-starlette>=2.1",
+    "anyio>=4.4",
+]
+
+[project.optional-dependencies]
+cuda = [
+    "cupy-cuda12x>=13.3",
+    "nvidia-nvimgcodec-cu12>=0.3",
+]
+s3 = [
+    "boto3>=1.35",
+]
+postgres = [
+    "psycopg[binary]>=3.2",
+    "sqlalchemy>=2.0",
+]
+modal = [
+    "modal>=0.66",
+]
+jwt = [
+    "pyjwt[crypto]>=2.9",
+]
+
+[project.scripts]
+pgdp-prep = "pd_prep_for_pgdp.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/ConcaveTrillion/pd-prep-for-pgdp"
+Repository = "https://github.com/ConcaveTrillion/pd-prep-for-pgdp"
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.0",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.7",
+    "httpx>=0.28",
+]
+
+[tool.uv.sources]
+pd-book-tools = { git = "https://github.com/ConcaveTrillion/pd-book-tools.git", tag = "v0.7.3" }
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pd_prep_for_pgdp"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/pd_prep_for_pgdp/static" = "pd_prep_for_pgdp/static"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

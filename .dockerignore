@@ -1,0 +1,28 @@
+.git/
+.gitignore
+.venv/
+.uv-cache/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Don't copy node_modules into the image — frontend stage runs npm install fresh.
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Generated artefacts from local builds.
+dist/
+build/
+*.egg-info/
+
+# Local data
+pgdp-projects/
+state.db*
+*.sqlite*
+
+# Specs / docs aren't needed in the image
+specs/
+process-book-belloc-the-four-men.ipynb

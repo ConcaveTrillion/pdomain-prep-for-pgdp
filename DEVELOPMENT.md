@@ -1,0 +1,231 @@
+# Developing pd-prep-for-pgdp
+
+This document covers contributor workflows. End-user install + usage lives
+in [`README.md`](README.md). Architecture writeup is in [`docs/`](docs/).
+
+## Prerequisites
+
+| Tool | Required for | Notes |
+|---|---|---|
+| [`uv`](https://docs.astral.sh/uv/) | Always | Python package + tool manager. Provisions Python itself. |
+| `git` | Always | |
+| Node 24 + `npm` | Frontend changes, `make build`, `make openapi-export` | Active LTS. **Not** required for backend-only iterations or running `pytest`. |
+| [`mise`](https://mise.jdx.dev/) | **Optional** | Pin Node / Python / uv per the repo's `mise.toml`. Make targets dispatch through it when present. See "Optional: pinned tool versions". |
+| NVIDIA GPU + CUDA Toolkit | Optional | For GPU-accelerated processing. CPU mode is first-class. |
+
+A sibling [`../pd-book-tools`](https://github.com/ConcaveTrillion/pd-book-tools)
+checkout is required for local-dev workflows that edit both repos at once.
+`make local-setup` clones it for you.
+
+## What needs Node, what doesn't
+
+**Doesn't need Node:**
+- `make setup` (uv sync + pre-commit hooks)
+- `make test` (pytest only — 128 tests, ~12 s)
+- `make install-local` (editable wheel install)
+- `make lint` / `make format`
+- Iterating on FastAPI routes / pipeline / models / adapters
+
+**Needs Node:**
+- `make frontend-build` — Vite build, copies SPA into `src/.../static/`.
+- `make frontend-dev` — Vite dev server on `:5173`.
+- `make build` — depends on `frontend-build` so the wheel ships with the SPA.
+- `make openapi-export` — uses `npx openapi-typescript`.
+- `make docker-build` — Dockerfile's first stage builds the SPA.
+
+End users running `pgdp-prep` (uv-tool wheel install) **never need Node** —
+the published wheel ships with the prebuilt SPA bundle.
+
+## Quick start
+
+Two paths depending on what you're doing.
+
+### A. Just developing pd-prep-for-pgdp (no pd-book-tools edits)
+
+```sh
+git clone https://github.com/ConcaveTrillion/pd-prep-for-pgdp.git
+cd pd-prep-for-pgdp
+make setup
+```
+
+Syncs dev deps from `pyproject.toml` (including `pd-book-tools` at the pinned
+git tag), installs pre-commit hooks. You can now run `uv run pgdp-prep`
+without a system install.
+
+### B. Editing pd-prep-for-pgdp **and** pd-book-tools side-by-side
+
+```sh
+git clone https://github.com/ConcaveTrillion/pd-prep-for-pgdp.git
+cd pd-prep-for-pgdp
+make local-setup
+```
+
+`local-setup` clones `pd-book-tools` to `../pd-book-tools` (or skips if
+present) and runs `make dev-local`, which:
+
+1. `uv sync --group dev` — installs deps from `pyproject.toml`.
+2. `uv pip install -e ../pd-book-tools` — replaces the pinned tag with the
+   sibling editable checkout.
+3. `make check-local-editable` — verifies imports resolve to the sibling,
+   not the cached tag.
+
+After that, `uv run pgdp-prep` picks up changes in either repo without a
+reinstall. Use `make install-local` to put the editable build on PATH as a
+uv tool.
+
+To revert to the pinned tag:
+
+```sh
+make uninstall-local
+curl -sSL https://raw.githubusercontent.com/ConcaveTrillion/pd-prep-for-pgdp/main/install.sh | sh
+```
+
+## Frontend dev
+
+```sh
+make frontend-dev      # Vite dev server on :5173 (auto-installs deps first)
+```
+
+In a separate terminal, run the backend with the Vite-dev passthrough:
+
+```sh
+uv run pgdp-prep --reload --frontend-dev http://localhost:5173
+```
+
+`--frontend-dev` makes FastAPI redirect `/` and unknown asset paths to the
+Vite dev server, while still owning `/api/*`, `/cdn/*`, and `/env.js`. No
+proxy config needed.
+
+For production-shape testing in dev:
+
+```sh
+make build         # builds SPA + wheel
+uv run pgdp-prep   # serves the bundled SPA from package resources
+```
+
+## Optional: pinned tool versions via mise
+
+The repo's [`mise.toml`](mise.toml) declares Node 24, Python 3.13, and the
+latest `uv`. Use mise if you want every contributor's machine to match:
+
+```sh
+make mise-download     # one-time: fetch mise binary into ~/.local/bin/
+make mise-setup        # one-time: install Node + Python + uv per mise.toml
+make mise-doctor       # show which versions are resolved
+```
+
+`make mise-setup` does **not** edit your `~/.bashrc`. The `frontend-*` and
+`openapi-export` targets dispatch through `mise exec` automatically when the
+mise binary is present; your interactive shell stays unchanged.
+
+If you also want `node` / `npm` directly in your shell, add this to your
+shell init yourself:
+
+```sh
+eval "$(~/.local/bin/mise activate bash)"   # or zsh / fish
+```
+
+Don't want mise? Install Node 24 yourself, or add the devcontainer Node
+feature (`ghcr.io/devcontainers/features/node:1`). All make targets fall
+back to whatever's on PATH.
+
+## Running tests
+
+```sh
+make test
+# or, equivalent:
+uv run pytest tests/ -v
+```
+
+Expected: 128 passed in ~12 s. Tests run with `gpu_backend="cpu"` and
+`storage_backend="filesystem"` by default — no Node, no Modal, no GPU
+hardware required.
+
+The full suite is documented in [`docs/07-testing.md`](docs/07-testing.md).
+
+## Lint / format
+
+```sh
+make lint        # ruff check (with import sort + autofix)
+make format      # ruff format, then lint
+make pre-commit-check
+```
+
+`pre-commit` hooks run on every commit if you ran `make setup`.
+
+## Building releases
+
+```sh
+make build         # builds SPA + wheel
+make release-patch # bumps patch version + creates a git tag
+make release-minor # ditto, minor
+make release-major # ditto, major
+git push --tags    # CI picks up the tag and builds the container
+```
+
+`hatch-vcs` derives the wheel version from the git tag at install time;
+`install.sh` resolves the latest GitHub tag from the `tags` API and runs
+`uv tool install git+...@<tag>`. There's no PyPI publish.
+
+## Repo layout
+
+```
+pd-prep-for-pgdp/
+├── src/pd_prep_for_pgdp/   # Python backend (FastAPI + pipeline)
+│   ├── api/                # routes (data/, gpu/, auth/, cdn, env_js)
+│   ├── core/               # mode-agnostic pipeline + models + OCR
+│   ├── adapters/           # storage / database / auth / gpu (swappable)
+│   └── dispatcher/         # immediate / batched (managed mode)
+├── frontend/               # React 19 + Vite + TS + Konva + TanStack Query
+├── tests/                  # pytest (128 tests)
+├── docs/                   # architecture writeup
+├── specs/                  # design specs (source of truth)
+├── pyproject.toml          # backend deps + extras + console script
+├── mise.toml               # optional pinned tool versions
+├── Makefile                # dev workflows
+├── Dockerfile              # managed-mode container
+├── install.sh / .ps1       # one-line end-user installer
+└── .github/workflows/      # CI (test + frontend build + wheel + container)
+```
+
+## Spec ↔ implementation map
+
+| Spec | Code |
+|---|---|
+| 01 — Configuration | `core/{models,config_resolver,prefix,assign_prefixes}.py` |
+| 02 — Pipeline | `core/{ingest,pipeline/,ocr,illustrations,text_postprocess,packaging}.py` |
+| 03 — UI layout | `frontend/src/pages/*.tsx` |
+| 04 — GPU | `adapters/gpu/*.py` |
+| 05 — Illustrations | `core/illustrations.py` |
+| 06 — Workbench | `frontend/src/pages/PageWorkbenchPage.tsx` |
+| 07 — API | `api/{auth,data,gpu}/*.py`, `api/cdn.py`, `api/env_js.py` |
+| 08 — Data models | `core/models.py` |
+| 09 — Deployment | `Dockerfile`, `install.sh`, `Makefile`, `.github/workflows/` |
+
+See [`docs/01-overview.md`](docs/01-overview.md) for the full module tour.
+
+## CI
+
+`.github/workflows/release.yml` runs on every push and on tag push:
+
+| Job | Trigger | What |
+|---|---|---|
+| `test` | every push | uv sync + ruff + pytest |
+| `build-frontend` | every push | npm install + `vite build` (Node 24 via `actions/setup-node@v4`); uploads `dist/` artifact |
+| `build-wheel` | after test + build-frontend | downloads SPA artifact → `uv build` |
+| `build-container` | tag push only | docker build (push not yet wired — needs ECR creds) |
+
+CI does not depend on mise; it pins versions in the workflow file directly.
+
+## Roadmap
+
+[`docs/08-roadmap.md`](docs/08-roadmap.md) tracks what's coming, in priority
+order. Highlights:
+
+- **P0:** Modal app S3 wiring, Postgres adapter, install.sh exercise.
+- **P1:** Per-page batch progress, OcrWord bbox highlight, text diff, Vitest setup.
+- **P2:** Konva rotate/flip, JWT profile dropdown, soft-delete, page text search.
+- **P3:** CUDA `LocalBackend`, shared GPU container, retry-with-payload-override.
+
+The live work queue (kept in sync) is at
+`~/.claude/projects/-workspaces-ocr-container-pd-prep-for-pgdp/memory/project_state.md`.
