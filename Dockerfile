@@ -27,11 +27,11 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
 
-# hatch-vcs derives the version from git tags — the build context here
-# doesn't include `.git`, so we have to pretend. CI passes the real tag
-# via --build-arg VERSION=…; defaults to 0.0.0+docker for ad-hoc builds.
+# hatch-vcs derives the version from git tags. The build context doesn't
+# ship `.git/`, so we statically pin the version into pyproject.toml at
+# build time. CI passes the real tag via --build-arg VERSION=…;
+# ad-hoc builds default to 0.0.0+docker.
 ARG VERSION=0.0.0+docker
-ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PD_PREP_FOR_PGDP=${VERSION}
 
 # Project metadata first so dependency-only layer caches well.
 COPY pyproject.toml ./
@@ -41,6 +41,12 @@ COPY README.md ./
 # Bring in the built frontend before installing — pyproject.toml's
 # force-include needs the directory to exist at install time.
 COPY --from=frontend-build /app/dist/ ./src/pd_prep_for_pgdp/static/
+
+# Replace `dynamic = ["version"]` with a literal version line. The
+# [tool.hatch.version] block in pyproject.toml becomes inert when version
+# is static, so we don't need to touch it.
+RUN sed -i 's|^dynamic = \["version"\]|version = "'"${VERSION}"'"|' pyproject.toml \
+    && grep -E '^(version|dynamic)' pyproject.toml
 
 # Install with the [s3,postgres,modal,jwt] extras for managed mode.
 RUN uv pip install --system ".[s3,postgres,modal,jwt]"
