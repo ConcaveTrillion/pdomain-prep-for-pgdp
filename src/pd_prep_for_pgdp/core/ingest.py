@@ -90,8 +90,7 @@ async def unzip_source(
                 prefix="",
                 source_stem=entry.stem,
                 ignore=(
-                    valid_idx0 < project.config.proof_start_idx0
-                    or valid_idx0 > project.config.proof_end_idx0
+                    valid_idx0 < project.config.proof_start_idx0 or valid_idx0 > project.config.proof_end_idx0
                 ),
                 source_key=entry.key,
             )
