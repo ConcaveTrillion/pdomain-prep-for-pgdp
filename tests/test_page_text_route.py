@@ -8,19 +8,26 @@ Locks in:
     `output.ocr_text_key` exists yet,
   - GET 404s for missing project / missing page / missing file,
   - GET 404 for another user's project (no-leak),
-  - the `_` suffix in the URL maps to "" (whole-page) per spec.
+  - the `_` suffix in the URL maps to "" (whole-page) per spec,
+  - GET surfaces persisted OcrWord bboxes when the sibling .words.json
+    blob is present, and returns `[]` when it isn't (legacy pages).
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 
 from pd_prep_for_pgdp.adapters.database.sqlite import SqliteDatabase
+from pd_prep_for_pgdp.adapters.gpu.cpu import words_key_for
+from pd_prep_for_pgdp.adapters.storage.filesystem import FilesystemStorage
 from pd_prep_for_pgdp.bootstrap import build_app
 from pd_prep_for_pgdp.core.models import (
+    BoundingBox,
+    OcrWord,
     PageRecord,
     PipelineState,
     Project,
@@ -157,3 +164,79 @@ def test_patch_text_404_for_unknown_page(tmp_path) -> None:
             json={"text": "x", "split_suffix": ""},
         )
         assert r.status_code == 404
+
+
+# ─── words sibling-blob round-trip on the GET endpoint ──────────────────────
+
+
+def test_get_text_returns_empty_words_when_blob_absent(tmp_path) -> None:
+    """Legacy pages OCR'd before the words blob existed → GET returns words=[]."""
+    settings = _settings(tmp_path)
+    _seed(settings)
+    app = build_app(settings)
+    with TestClient(app) as client:
+        # PATCH writes the .txt only — no sibling .words.json.
+        r = client.patch(
+            "/api/data/projects/pt1/pages/0/text",
+            json={"text": "hello", "split_suffix": ""},
+        )
+        assert r.status_code == 200, r.text
+        r2 = client.get("/api/data/projects/pt1/pages/0/text/_")
+        assert r2.status_code == 200
+        body = r2.json()
+        assert body["text"] == "hello"
+        assert body["text_key"].endswith("/ocr_text/src1_p001.txt")
+        assert body["words"] == []
+
+
+def test_get_text_surfaces_persisted_words_when_blob_present(tmp_path) -> None:
+    """When `<root>.words.json` exists, GET deserialises and returns the list."""
+    settings = _settings(tmp_path)
+    _seed(settings)
+
+    # Drop a text + words blob directly via the same FilesystemStorage that
+    # the app will use, so the route reads our seeded data.
+    storage = FilesystemStorage(root=settings.data_root)
+    text_key = "projects/pt1/ocr_text/src1_p001.txt"
+    words = [
+        OcrWord(
+            id="w1",
+            text="hello",
+            confidence=0.99,
+            bounding_box=BoundingBox(left=10, top=20, width=30, height=40),
+        ),
+        OcrWord(
+            id="w2",
+            text="world",
+            confidence=0.5,
+            bounding_box=BoundingBox(left=50, top=60, width=70, height=80),
+        ),
+    ]
+
+    async def seed_blobs() -> None:
+        await storage.put_bytes(text_key, b"hello world", "text/plain")
+        await storage.put_bytes(
+            words_key_for(text_key),
+            json.dumps([w.model_dump(mode="json") for w in words]).encode("utf-8"),
+            "application/json",
+        )
+
+    asyncio.run(seed_blobs())
+
+    app = build_app(settings)
+    with TestClient(app) as client:
+        r = client.get("/api/data/projects/pt1/pages/0/text/_")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["text"] == "hello world"
+        assert body["text_key"] == text_key
+        assert len(body["words"]) == 2
+        assert body["words"][0]["id"] == "w1"
+        assert body["words"][0]["text"] == "hello"
+        assert body["words"][0]["bounding_box"] == {
+            "left": 10,
+            "top": 20,
+            "width": 30,
+            "height": 40,
+        }
+        assert body["words"][1]["id"] == "w2"

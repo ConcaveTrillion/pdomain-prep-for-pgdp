@@ -33,6 +33,7 @@ from pd_book_tools.hf import (
 from pd_book_tools.hf import (
     resolve_ocr_models as resolve_ocr_models_fn,
 )
+
 from .models import BoundingBox, OcrWord, ResolvedPageConfig, SystemDefaults
 
 log = logging.getLogger(__name__)

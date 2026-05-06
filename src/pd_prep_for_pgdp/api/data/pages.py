@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from ...adapters.auth import UserContext
 from ...adapters.database import IDatabase
+from ...adapters.gpu.cpu import load_words_from_storage, words_key_for
 from ...adapters.storage import IStorage
 from ...core.models import (
     AlignmentOverride,
     IllustrationRegion,
+    OcrWord,
     PageConfigOverrides,
     PageProcessingStatus,
     PageRecord,
@@ -18,6 +22,8 @@ from ...core.models import (
     PageType,
 )
 from ..dependencies import get_database, get_storage, get_user
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["pages"])
 
@@ -43,6 +49,16 @@ class UpdatePageTextRequest(BaseModel):
 
 class UpdatePageTextResponse(BaseModel):
     text_key: str
+
+
+class GetPageTextResponse(BaseModel):
+    text: str
+    text_key: str
+    # Bboxes for the TextReviewPage overlay. Empty list for legacy pages
+    # OCR'd before the words blob was written (or for pages whose words
+    # file was lost). The frontend treats `[]` and "no overlay" as the
+    # same case, so empty-list is the more idiomatic shape than None.
+    words: list[OcrWord] = []
 
 
 @router.get(
@@ -187,6 +203,7 @@ async def update_page_text(
 
 @router.get(
     "/projects/{project_id}/pages/{idx0}/text/{suffix}",
+    response_model=GetPageTextResponse,
 )
 async def get_page_text(
     project_id: str,
@@ -195,7 +212,7 @@ async def get_page_text(
     user: UserContext = Depends(get_user),
     db: IDatabase = Depends(get_database),
     storage: IStorage = Depends(get_storage),
-) -> dict[str, str]:
+) -> GetPageTextResponse:
     project = await db.get_project(project_id)
     if project is None or project.owner_id != user.user_id:
         raise HTTPException(404, "project not found")
@@ -214,4 +231,18 @@ async def get_page_text(
         text_key = f"projects/{project_id}/ocr_text/{stem_prefix}.txt"
     if not await storage.exists(text_key):
         raise HTTPException(404, "text not found")
-    return {"text": (await storage.get_bytes(text_key)).decode("utf-8"), "text_key": text_key}
+    text = (await storage.get_bytes(text_key)).decode("utf-8")
+
+    # Try to load the sibling words blob. Legacy pages OCR'd before
+    # `cpu.run_ocr` started persisting words won't have one — return [].
+    words: list[OcrWord] = []
+    words_key = words_key_for(text_key)
+    if await storage.exists(words_key):
+        try:
+            raw = await storage.get_bytes(words_key)
+            words = load_words_from_storage(raw)
+        except Exception:
+            log.exception("failed to decode words blob at %s; returning empty list", words_key)
+            words = []
+
+    return GetPageTextResponse(text=text, text_key=text_key, words=words)

@@ -11,6 +11,7 @@ CPU mode is **first-class**, not degraded — see spec 09.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from pathlib import Path
@@ -20,6 +21,7 @@ import anyio.to_thread
 
 from ...core.config_resolver import resolve_page_config
 from ...core.models import (
+    OcrWord,
     PageRecord,
     SystemDefaults,
 )
@@ -139,6 +141,14 @@ class CpuBackend(GPUBackend):
         text_key = f"projects/{req.project_id}/ocr_text/{page.source_stem}_{full_prefix}.txt"
         await self._storage.put_bytes(text_key, text.encode("utf-8"), "text/plain")
 
+        # Persist words alongside the text so the TextReviewPage overlay has
+        # bboxes to render on a fresh page mount (P1 #6). Same key root,
+        # `.words.json` suffix instead of `.txt`. Serialise via Pydantic so
+        # the on-disk shape matches `list[OcrWord]` exactly.
+        words_key = words_key_for(text_key)
+        words_payload = json.dumps([w.model_dump(mode="json") for w in words]).encode("utf-8")
+        await self._storage.put_bytes(words_key, words_payload, "application/json")
+
         return OcrPageResponse(text=text, words=words, text_key=text_key)
 
     async def run_batch(
@@ -238,6 +248,24 @@ class CpuBackend(GPUBackend):
 
 
 # ─── Module-level helpers (module-scope so they can run on a thread) ────────
+
+
+def words_key_for(text_key: str) -> str:
+    """Sibling words-blob key for an OCR text key.
+
+    `<root>.txt` -> `<root>.words.json`. If the text key doesn't end in
+    `.txt` (shouldn't happen, but be defensive), we still append the
+    suffix so the words blob is co-located with the text.
+    """
+    if text_key.endswith(".txt"):
+        return text_key[:-4] + ".words.json"
+    return text_key + ".words.json"
+
+
+def load_words_from_storage(raw: bytes) -> list[OcrWord]:
+    """Decode the on-disk words blob into a list of `OcrWord`."""
+    items = json.loads(raw.decode("utf-8"))
+    return [OcrWord.model_validate(item) for item in items]
 
 
 def _ocr_image_bytes(
