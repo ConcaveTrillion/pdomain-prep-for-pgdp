@@ -8,8 +8,6 @@ We can't actually run uvicorn from the test process, but we can:
 
 from __future__ import annotations
 
-from io import StringIO
-
 import pytest
 
 from pd_prep_for_pgdp.__main__ import _parse_args, main

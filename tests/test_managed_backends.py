@@ -28,7 +28,6 @@ from pd_prep_for_pgdp.adapters.gpu.modal_backend import ModalBackend
 from pd_prep_for_pgdp.adapters.gpu.shared_container import SharedContainerBackend
 from pd_prep_for_pgdp.core.models import PageConfigOverrides
 
-
 # ── ModalBackend ───────────────────────────────────────────────────────────
 
 
@@ -91,6 +90,4 @@ async def test_shared_container_methods_are_not_yet_wired() -> None:
         await backend.run_ocr(OcrPageRequest(project_id="p", idx0=0))
 
     with pytest.raises(NotImplementedError):
-        await backend.run_batch(
-            [BatchJobItem(job_type="batch_ocr", project_id="p", idx0=0, payload={})]
-        )
+        await backend.run_batch([BatchJobItem(job_type="batch_ocr", project_id="p", idx0=0, payload={})])

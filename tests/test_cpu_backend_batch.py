@@ -73,17 +73,13 @@ async def test_run_batch_marks_unknown_job_type_as_error(
 
 
 @pytest.mark.asyncio
-async def test_run_batch_isolates_failure_per_item(
-    db: SqliteDatabase, storage: FilesystemStorage
-) -> None:
+async def test_run_batch_isolates_failure_per_item(db: SqliteDatabase, storage: FilesystemStorage) -> None:
     """First item fails (project missing); second succeeds (unknown type)."""
     backend = CpuBackend(storage=storage, database=db)
     items = [
         # project doesn't exist -> process_page raises FileNotFoundError ->
         # caught and returned as ok=False.
-        BatchJobItem(
-            job_type="batch_process_pages", project_id="missing-project", idx0=0, payload={}
-        ),
+        BatchJobItem(job_type="batch_process_pages", project_id="missing-project", idx0=0, payload={}),
         # Unknown job type — should land in the explicit "unsupported" branch
         # and NOT be aborted by the previous failure.
         BatchJobItem(job_type="zzz", project_id="p1", idx0=1, payload={}),

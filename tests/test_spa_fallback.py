@@ -56,7 +56,7 @@ def test_spa_fallback_serves_index_for_router_path(tmp_path) -> None:
             assert r.status_code == 200, path
             assert "text/html" in r.headers["content-type"], path
             # index.html has the Vite-injected /assets/index-*.js script tag.
-            assert "<div id=\"root\"" in r.text or "/assets/" in r.text
+            assert '<div id="root"' in r.text or "/assets/" in r.text
 
 
 def test_static_assets_still_resolve(tmp_path) -> None:

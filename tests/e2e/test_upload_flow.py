@@ -34,9 +34,7 @@ def _zip_bytes() -> bytes:
     return buf.getvalue()
 
 
-def test_upload_zip_navigates_to_filtered_jobs_page(
-    live_server: LiveServer, page: Page, tmp_path
-) -> None:
+def test_upload_zip_navigates_to_filtered_jobs_page(live_server: LiveServer, page: Page, tmp_path) -> None:
     pytest.importorskip("cv2")
 
     zip_path = tmp_path / "book.zip"

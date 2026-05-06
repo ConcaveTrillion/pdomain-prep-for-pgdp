@@ -1,12 +1,12 @@
 """Cover the small helpers in `core.illustrations`.
 
-  - `_map_region_type` maps decoration/figure/table region types onto the
-    spec-05 string fields,
-  - `synthesise_plate_region` produces a full-page region for plate_p
-    pages whose source dimensions are known,
-  - `regions_for_page` returns user-configured regions when present,
-    falls back to the synthesised plate region when needed, and returns
-    [] otherwise.
+- `_map_region_type` maps decoration/figure/table region types onto the
+  spec-05 string fields,
+- `synthesise_plate_region` produces a full-page region for plate_p
+  pages whose source dimensions are known,
+- `regions_for_page` returns user-configured regions when present,
+  falls back to the synthesised plate region when needed, and returns
+  [] otherwise.
 """
 
 from __future__ import annotations
@@ -22,7 +22,6 @@ from pd_prep_for_pgdp.core.models import (
     PageType,
     SystemDefaults,
 )
-
 
 # ── _map_region_type ───────────────────────────────────────────────────────
 
@@ -52,9 +51,7 @@ def test_map_region_type_unknown_falls_through_to_illustration() -> None:
 
 
 def test_synthesise_plate_region_for_plate_p_page() -> None:
-    page = PageRecord(
-        project_id="p", idx0=0, prefix="p001", source_stem="src1", page_type=PageType.plate_p
-    )
+    page = PageRecord(project_id="p", idx0=0, prefix="p001", source_stem="src1", page_type=PageType.plate_p)
     region = synthesise_plate_region(page, source_dimensions=(2000, 1500))
     assert region.index == 1
     assert region.type == "plate"
@@ -90,9 +87,7 @@ def test_regions_for_page_returns_configured_regions() -> None:
 
 
 def test_regions_for_page_synthesises_for_plate_p_with_dimensions() -> None:
-    page = PageRecord(
-        project_id="p", idx0=0, prefix="p001", source_stem="src1", page_type=PageType.plate_p
-    )
+    page = PageRecord(project_id="p", idx0=0, prefix="p001", source_stem="src1", page_type=PageType.plate_p)
     out = regions_for_page(page, system=SystemDefaults(), source_dimensions=(800, 600))
     assert len(out) == 1
     assert out[0].type == "plate"
@@ -107,8 +102,6 @@ def test_regions_for_page_returns_empty_for_normal_page_with_no_regions() -> Non
 def test_regions_for_page_plate_p_without_dimensions_returns_empty() -> None:
     """Without source_dimensions we can't synthesise — return [] rather
     than guess at the page extent."""
-    page = PageRecord(
-        project_id="p", idx0=0, prefix="p001", source_stem="src1", page_type=PageType.plate_p
-    )
+    page = PageRecord(project_id="p", idx0=0, prefix="p001", source_stem="src1", page_type=PageType.plate_p)
     out = regions_for_page(page, system=SystemDefaults())
     assert out == []

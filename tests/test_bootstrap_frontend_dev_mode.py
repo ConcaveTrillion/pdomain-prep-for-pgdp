@@ -1,9 +1,9 @@
 """Tests for `_mount_static_frontend` early-returns.
 
-  - When `frontend_dev_url` is set, the static SPA mount is skipped — the
-    user runs Vite separately and the FastAPI process only serves /api/*.
-  - When the bundle directory exists but isn't a directory (or is missing),
-    the helper logs a warning and returns; the app still works for /api/*.
+- When `frontend_dev_url` is set, the static SPA mount is skipped — the
+  user runs Vite separately and the FastAPI process only serves /api/*.
+- When the bundle directory exists but isn't a directory (or is missing),
+  the helper logs a warning and returns; the app still works for /api/*.
 """
 
 from __future__ import annotations

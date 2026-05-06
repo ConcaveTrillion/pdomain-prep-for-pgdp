@@ -65,9 +65,7 @@ def _seed(settings: Settings, owner_id: str = "default") -> None:
                 storage_prefix="projects/up1/",
             )
         )
-        await db.put_pages(
-            [PageRecord(project_id="up1", idx0=0, prefix="", source_stem="src1")]
-        )
+        await db.put_pages([PageRecord(project_id="up1", idx0=0, prefix="", source_stem="src1")])
         await db.close()
 
     asyncio.run(go())
@@ -91,9 +89,7 @@ def test_patch_alignment_updates_row(tmp_path) -> None:
     _seed(settings)
     app = build_app(settings)
     with TestClient(app) as client:
-        r = client.patch(
-            "/api/data/projects/up1/pages/0", json={"alignment": "center"}
-        )
+        r = client.patch("/api/data/projects/up1/pages/0", json={"alignment": "center"})
         assert r.status_code == 200, r.text
         assert r.json()["alignment"] == "center"
 

@@ -206,15 +206,11 @@ async def test_thumbnails_generates_jpgs_for_every_page(
     zip_bytes = _make_zip([("p1.png", _png(80, 60)), ("p2.png", _png(80, 60))])
     src_key = f"projects/{project.id}/source.zip"
     await storage.put_bytes(src_key, zip_bytes)
-    await unzip_source(
-        project=project, source_type="zip", source_key=src_key, storage=storage, database=db
-    )
+    await unzip_source(project=project, source_type="zip", source_key=src_key, storage=storage, database=db)
 
     refreshed = await db.get_project(project.id)
     assert refreshed is not None
-    result = await generate_thumbnails(
-        project=refreshed, storage=storage, database=db
-    )
+    result = await generate_thumbnails(project=refreshed, storage=storage, database=db)
     assert result.page_count == 2
 
     pages, _, _ = await db.list_pages(project.id, None, 100)
@@ -223,9 +219,7 @@ async def test_thumbnails_generates_jpgs_for_every_page(
 
 
 @pytest.mark.asyncio
-async def test_thumbnails_advances_project_status(
-    db: SqliteDatabase, storage: FilesystemStorage
-) -> None:
+async def test_thumbnails_advances_project_status(db: SqliteDatabase, storage: FilesystemStorage) -> None:
     from pd_prep_for_pgdp.core.ingest import generate_thumbnails, unzip_source
 
     project = _project()
@@ -233,9 +227,7 @@ async def test_thumbnails_advances_project_status(
     zip_bytes = _make_zip([("p.png", _png(50, 50))])
     src_key = f"projects/{project.id}/source.zip"
     await storage.put_bytes(src_key, zip_bytes)
-    await unzip_source(
-        project=project, source_type="zip", source_key=src_key, storage=storage, database=db
-    )
+    await unzip_source(project=project, source_type="zip", source_key=src_key, storage=storage, database=db)
     refreshed = await db.get_project(project.id)
     assert refreshed is not None
     await generate_thumbnails(project=refreshed, storage=storage, database=db)
@@ -261,9 +253,7 @@ async def test_thumbnails_records_corrupt_entries_as_errors(
     )
     src_key = f"projects/{project.id}/source.zip"
     await storage.put_bytes(src_key, zip_bytes)
-    await unzip_source(
-        project=project, source_type="zip", source_key=src_key, storage=storage, database=db
-    )
+    await unzip_source(project=project, source_type="zip", source_key=src_key, storage=storage, database=db)
 
     refreshed = await db.get_project(project.id)
     assert refreshed is not None

@@ -1,9 +1,9 @@
 """Small 404 paths that fall outside the dedicated route test files.
 
-  - `GET /api/data/jobs/{id}` 404 for unknown / other-user job
-    (api/data/jobs.py:36),
-  - `POST /api/gpu/ingest` 404 for unknown / other-user project
-    (api/gpu/ingest.py:32).
+- `GET /api/data/jobs/{id}` 404 for unknown / other-user job
+  (api/data/jobs.py:36),
+- `POST /api/gpu/ingest` 404 for unknown / other-user project
+  (api/gpu/ingest.py:32).
 """
 
 from __future__ import annotations

@@ -1,8 +1,8 @@
 """Lock in `dispatcher.immediate.ImmediateDispatcher` behaviour.
 
-  - `submit` runs the backend's `run_batch` synchronously and stashes results,
-  - `flush` drains the buffer and resets it,
-  - parallel submits serialize behind the lock (no result interleaving lost).
+- `submit` runs the backend's `run_batch` synchronously and stashes results,
+- `flush` drains the buffer and resets it,
+- parallel submits serialize behind the lock (no result interleaving lost).
 """
 
 from __future__ import annotations

@@ -116,9 +116,7 @@ async def test_on_dispatcher_flush_marks_job_error_when_all_failed(
 
 
 @pytest.mark.asyncio
-async def test_run_forever_exits_when_stop_set(
-    db: SqliteDatabase, storage: FilesystemStorage
-) -> None:
+async def test_run_forever_exits_when_stop_set(db: SqliteDatabase, storage: FilesystemStorage) -> None:
     runner = InProcessJobRunner(database=db, storage=storage, poll_interval=10)
     task = asyncio.create_task(runner.run_forever())
     # Give it one tick to enter the loop, then ask it to stop.

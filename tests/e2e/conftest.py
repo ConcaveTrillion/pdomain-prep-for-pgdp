@@ -47,9 +47,7 @@ def _spa_built() -> bool:
 @pytest.fixture(scope="session")
 def live_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[LiveServer]:
     if not _spa_built():
-        pytest.skip(
-            "SPA not built — run `make frontend-build` (or `make e2e`) before pytest tests/e2e"
-        )
+        pytest.skip("SPA not built — run `make frontend-build` (or `make e2e`) before pytest tests/e2e")
 
     data_root = tmp_path_factory.mktemp("e2e-data")
     config_dir = tmp_path_factory.mktemp("e2e-config")

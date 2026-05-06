@@ -71,9 +71,7 @@ async def test_batch_pages_missing_project_raises(db, storage) -> None:
     runner wraps it as JobStatus.error like every other handler."""
     from pd_prep_for_pgdp.adapters.gpu.cpu import CpuBackend
 
-    runner = InProcessJobRunner(
-        database=db, storage=storage, gpu=CpuBackend(storage=storage, database=db)
-    )
+    runner = InProcessJobRunner(database=db, storage=storage, gpu=CpuBackend(storage=storage, database=db))
     job = Job(
         id="j-noproj",
         project_id="ghost",
@@ -109,9 +107,7 @@ async def test_batch_pages_empty_no_op(db, storage, monkeypatch) -> None:
     and returns without dispatching anything."""
     from pd_prep_for_pgdp.adapters.gpu.cpu import CpuBackend
 
-    runner = InProcessJobRunner(
-        database=db, storage=storage, gpu=CpuBackend(storage=storage, database=db)
-    )
+    runner = InProcessJobRunner(database=db, storage=storage, gpu=CpuBackend(storage=storage, database=db))
     await db.put_project(_project())  # No pages added.
     job = Job(
         id="j-empty",

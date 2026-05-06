@@ -15,7 +15,6 @@ import asyncio
 import threading
 from datetime import UTC, datetime
 
-import pytest
 from playwright.sync_api import Page, expect
 
 from pd_prep_for_pgdp.adapters.database.sqlite import SqliteDatabase
@@ -90,9 +89,7 @@ def _seed(db_url: str, project_id: str, job_type: JobType) -> None:
         raise error[0]
 
 
-def test_configure_page_shows_thumbnails_banner_during_ingest(
-    live_server: LiveServer, page: Page
-) -> None:
+def test_configure_page_shows_thumbnails_banner_during_ingest(live_server: LiveServer, page: Page) -> None:
     project_id = "banner-thumbs"
     _seed(live_server.settings.derived_database_url, project_id, JobType.thumbnails)
 
@@ -102,9 +99,7 @@ def test_configure_page_shows_thumbnails_banner_during_ingest(
     expect(page.get_by_role("link", name="Open jobs page →")).to_be_visible()
 
 
-def test_configure_page_shows_unzip_banner_during_ingest(
-    live_server: LiveServer, page: Page
-) -> None:
+def test_configure_page_shows_unzip_banner_during_ingest(live_server: LiveServer, page: Page) -> None:
     project_id = "banner-unzip"
     _seed(live_server.settings.derived_database_url, project_id, JobType.unzip)
 

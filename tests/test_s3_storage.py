@@ -169,9 +169,7 @@ async def test_exists_returns_true_when_head_succeeds(fake_boto3: _FakeS3Client)
 
     s = S3Storage(bucket="b")
     assert await s.exists("k") is True
-    assert ("head_object", {"Bucket": "b", "Key": "k"}) in [
-        (n, kw) for n, kw in fake_boto3.calls
-    ]
+    assert ("head_object", {"Bucket": "b", "Key": "k"}) in [(n, kw) for n, kw in fake_boto3.calls]
 
 
 @pytest.mark.asyncio
@@ -207,9 +205,7 @@ async def test_delete_calls_boto_delete_object(fake_boto3: _FakeS3Client) -> Non
 
     s = S3Storage(bucket="b", prefix="proj")
     await s.delete("k")
-    assert ("delete_object", {"Bucket": "b", "Key": "proj/k"}) in [
-        (n, kw) for n, kw in fake_boto3.calls
-    ]
+    assert ("delete_object", {"Bucket": "b", "Key": "proj/k"}) in [(n, kw) for n, kw in fake_boto3.calls]
 
 
 @pytest.mark.asyncio

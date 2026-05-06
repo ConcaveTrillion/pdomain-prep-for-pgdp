@@ -96,9 +96,7 @@ def test_cancel_live_job_flips_to_cancelled(tmp_path, from_status: JobStatus) ->
         assert body["status"] == "cancelled"
 
 
-@pytest.mark.parametrize(
-    "terminal", [JobStatus.complete, JobStatus.error, JobStatus.cancelled]
-)
+@pytest.mark.parametrize("terminal", [JobStatus.complete, JobStatus.error, JobStatus.cancelled])
 def test_cancel_terminal_job_is_noop(tmp_path, terminal: JobStatus) -> None:
     settings = _settings(tmp_path)
     _seed(settings, job_id="t1", status=terminal)

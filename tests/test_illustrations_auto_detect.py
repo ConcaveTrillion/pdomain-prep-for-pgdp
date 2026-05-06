@@ -23,7 +23,6 @@ from pd_prep_for_pgdp.core.illustrations import (
 )
 from pd_prep_for_pgdp.core.models import IllustrationRegion
 
-
 # ─── Fakes that mirror pd_book_tools.layout.types shape ───────────────────
 
 
@@ -112,9 +111,7 @@ def test_filters_by_type_and_confidence(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert out[1].L == 0 and out[1].R == 0
 
 
-def test_returns_empty_if_pd_book_tools_missing(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_returns_empty_if_pd_book_tools_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """No pd_book_tools installed → auto-detect can't decide what counts as
     illustration vs text. Must degrade to [] rather than crashing."""
     import builtins
@@ -128,9 +125,7 @@ def test_returns_empty_if_pd_book_tools_missing(
 
     monkeypatch.setattr(builtins, "__import__", block)
 
-    detector = _FakeDetector(
-        [_FakeRegion(type=_figure, confidence=0.99, L=0, T=0, R=10, B=10)]
-    )
+    detector = _FakeDetector([_FakeRegion(type=_figure, confidence=0.99, L=0, T=0, R=10, B=10)])
     out = auto_detect_illustrations(tmp_path / "img.png", layout_detector=detector, confidence_threshold=0.5)
     assert out == []
 

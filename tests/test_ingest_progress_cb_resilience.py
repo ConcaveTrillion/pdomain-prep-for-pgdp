@@ -1,14 +1,14 @@
 """Lock in defensive paths in `core.ingest`:
 
-  - `unzip_source` swallows a raising `progress_cb` and keeps going (the
-    job runner shouldn't be killed by a UI-side reporting bug),
-  - `generate_thumbnails` swallows a raising `progress_cb` likewise,
-  - `generate_thumbnails` skips pages that already have a thumbnail and
-    pages with no `source_key`,
-  - `generate_thumbnails` returns 0 + advances pipeline state when there
-    are no pages to thumbnail (the early-return at total==0),
-  - `generate_thumbnails` skips pages whose `source_key` is missing on
-    storage (the get_bytes try/except).
+- `unzip_source` swallows a raising `progress_cb` and keeps going (the
+  job runner shouldn't be killed by a UI-side reporting bug),
+- `generate_thumbnails` swallows a raising `progress_cb` likewise,
+- `generate_thumbnails` skips pages that already have a thumbnail and
+  pages with no `source_key`,
+- `generate_thumbnails` returns 0 + advances pipeline state when there
+  are no pages to thumbnail (the early-return at total==0),
+- `generate_thumbnails` skips pages whose `source_key` is missing on
+  storage (the get_bytes try/except).
 """
 
 from __future__ import annotations
@@ -107,18 +107,14 @@ async def test_thumbnails_swallows_raising_progress_cb(db, storage) -> None:
     await db.put_project(project)
     src_key = "projects/ip1/source.zip"
     await storage.put_bytes(src_key, _zip([("p1.png", _png(50, 50))]))
-    await unzip_source(
-        project=project, source_type="zip", source_key=src_key, storage=storage, database=db
-    )
+    await unzip_source(project=project, source_type="zip", source_key=src_key, storage=storage, database=db)
     refreshed = await db.get_project(project.id)
     assert refreshed is not None
 
     async def boom(_c, _t, _s):
         raise RuntimeError("UI-side reporting failure")
 
-    result = await generate_thumbnails(
-        project=refreshed, storage=storage, database=db, progress_cb=boom
-    )
+    result = await generate_thumbnails(project=refreshed, storage=storage, database=db, progress_cb=boom)
     assert result.page_count == 1
 
 
