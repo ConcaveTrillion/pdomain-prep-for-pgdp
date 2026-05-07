@@ -347,6 +347,83 @@ class Job(ApiModel):
     The jobs table stores Job as JSON, so this is schema-migration-free."""
 
 
+# ─── PageStageState (per-page stage DAG persistence) ────────────────────────
+
+
+class PageStageStatus(str, Enum):
+    """Per-stage status — see canonical spec §SQLite schema (Q1 lock).
+
+    `not-applicable` indicates a stage is skipped because of page type
+    (e.g. blank-page short-circuit skips `decode_source` … `morph_fill`).
+    """
+
+    not_run = "not-run"
+    running = "running"
+    clean = "clean"
+    dirty = "dirty"
+    failed = "failed"
+    not_applicable = "not-applicable"
+
+
+# Canonical stage-ID list — single source of truth at the model layer; the
+# DAG module (M1 §B) re-uses this tuple to enumerate stages and the SQLite
+# schema's CHECK constraint pins the same set. Order matches a reasonable
+# topological walk of the DAG (per spec §"Per-page stage DAG"); the DAG
+# module is the authority on actual edges.
+PAGE_STAGE_IDS: tuple[str, ...] = (
+    # Pre-existing-today (already discrete; just naming them).
+    "ingest_source",
+    "thumbnail",
+    "auto_detect_attrs",
+    "auto_detect_illustrations",
+    # Decomposed from process_page_cpu (4c-4o).
+    "decode_source",
+    "initial_crop",
+    "manual_deskew_pre",
+    "grayscale",
+    "threshold",
+    "invert",
+    "find_content_edges",
+    "crop_to_content",
+    "auto_deskew",
+    "morph_fill",
+    "rescale",
+    "canvas_map",
+    # Alt to canvas_map for blank-page short-circuit.
+    "blank_proof_synth",
+    # Post-Step-4 chain.
+    "ocr_crop",
+    "extract_illustrations",
+    "ocr",
+    "text_postprocess",
+    "text_review",
+)
+
+
+class PageStageState(ApiModel):
+    """One per-page stage row — state of stage `stage_id` on page `page_id`.
+
+    Spec: `docs/specs/pipeline-task-model.md` §"SQLite schema" (Q1 lock).
+
+    `page_id` is a string so it can encode split-child identity later (e.g.
+    `0042/splits/a` for the first split-child of page 42). For root pages
+    today, `page_id` is the zero-padded 4-digit `idx0`.
+    """
+
+    project_id: str
+    page_id: str
+    stage_id: str
+    status: PageStageStatus = PageStageStatus.not_run
+    stage_version: int = 1
+    artifact_key: str | None = None
+    config_hash: str | None = None
+    input_hash: str | None = None
+    last_run_at: float | None = None  # epoch seconds
+    duration_ms: int | None = None
+    error_message: str | None = None
+    job_id: str | None = None  # last job that touched this row
+
+
 # ─── OCR ─────────────────────────────────────────────────────────────────────
 
 

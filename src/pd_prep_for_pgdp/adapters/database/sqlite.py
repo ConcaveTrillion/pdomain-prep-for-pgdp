@@ -14,9 +14,26 @@ from pathlib import Path
 
 import anyio.to_thread
 
-from ...core.models import Job, PageRecord, Project, SystemDefaults
+from ...core.models import (
+    PAGE_STAGE_IDS,
+    Job,
+    PageRecord,
+    PageStageState,
+    PageStageStatus,
+    Project,
+    SystemDefaults,
+)
 
-_SCHEMA = """
+# Inline string-list literal of the 22 canonical stage IDs (built once at
+# import time from `PAGE_STAGE_IDS`) so the CHECK constraint stays
+# synchronised with the model's source of truth without runtime indirection.
+_STAGE_ID_CHECK_CLAUSE = "(" + ", ".join(f"'{s}'" for s in PAGE_STAGE_IDS) + ")"
+
+# CHECK clause for page_stages.status — mirrors the PageStageStatus enum
+# values verbatim. Spec §SQLite schema lists the same set.
+_STATUS_CHECK_CLAUSE = "('not-run', 'running', 'clean', 'dirty', 'failed', 'not-applicable')"
+
+_SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS system_defaults (
     owner_id TEXT PRIMARY KEY,
     body     TEXT NOT NULL
@@ -44,6 +61,33 @@ CREATE TABLE IF NOT EXISTS jobs (
     created_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS jobs_owner_created ON jobs(owner_id, created_at DESC);
+
+-- Per-page stage DAG state — canonical spec docs/specs/pipeline-task-model.md
+-- §"SQLite schema" (Q1 locked 2026-05-07).
+-- Composite PK + CHECK constraints on status / stage_id keep the table
+-- self-validating; the runner's typed wrappers in core/models.py are the
+-- source of truth that the CHECK clauses mirror.
+CREATE TABLE IF NOT EXISTS page_stages (
+    project_id    TEXT    NOT NULL,
+    page_id       TEXT    NOT NULL,
+    stage_id      TEXT    NOT NULL,
+    status        TEXT    NOT NULL,
+    stage_version INTEGER NOT NULL,
+    config_hash   TEXT,
+    input_hash    TEXT,
+    artifact_key  TEXT,
+    last_run_at   REAL,
+    duration_ms   INTEGER,
+    error_message TEXT,
+    job_id        TEXT,
+    PRIMARY KEY (project_id, page_id, stage_id),
+    CHECK (status IN {_STATUS_CHECK_CLAUSE}),
+    CHECK (stage_id IN {_STAGE_ID_CHECK_CLAUSE})
+);
+CREATE INDEX IF NOT EXISTS page_stages_proj_status
+    ON page_stages(project_id, status);
+CREATE INDEX IF NOT EXISTS page_stages_proj_page
+    ON page_stages(project_id, page_id);
 """
 
 
@@ -168,6 +212,7 @@ class SqliteDatabase:
     async def delete_project(self, project_id: str) -> None:
         def _go() -> None:
             with self._cursor() as cur:
+                cur.execute("DELETE FROM page_stages WHERE project_id = ?", (project_id,))
                 cur.execute("DELETE FROM pages WHERE project_id = ?", (project_id,))
                 cur.execute("DELETE FROM projects WHERE id = ?", (project_id,))
 
@@ -267,3 +312,140 @@ class SqliteDatabase:
             return [Job.model_validate_json(r[0]) for r in rows]
 
         return await self._run(_go)
+
+    # ── Page stages (per-page DAG state, M1 §A) ─────────────────────────────
+
+    async def get_page_stage(
+        self,
+        project_id: str,
+        page_id: str,
+        stage_id: str,
+    ) -> PageStageState | None:
+        """Fetch one page-stage row by its composite PK, or None if missing."""
+
+        def _go() -> PageStageState | None:
+            with self._cursor() as cur:
+                row = cur.execute(
+                    "SELECT project_id, page_id, stage_id, status, stage_version, "
+                    "       config_hash, input_hash, artifact_key, last_run_at, "
+                    "       duration_ms, error_message, job_id "
+                    "FROM page_stages "
+                    "WHERE project_id=? AND page_id=? AND stage_id=?",
+                    (project_id, page_id, stage_id),
+                ).fetchone()
+            return _row_to_page_stage(row) if row else None
+
+        return await self._run(_go)
+
+    async def put_page_stage(self, state: PageStageState) -> None:
+        """Idempotent upsert (INSERT OR REPLACE on the composite PK).
+
+        The transactional write contract for the DAG runner (Q1-followup
+        dual-write reconciliation) is implemented one layer up — this method
+        is only the DB-side half.
+        """
+
+        def _go() -> None:
+            with self._cursor() as cur:
+                cur.execute(
+                    "INSERT OR REPLACE INTO page_stages "
+                    "(project_id, page_id, stage_id, status, stage_version, "
+                    " config_hash, input_hash, artifact_key, last_run_at, "
+                    " duration_ms, error_message, job_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        state.project_id,
+                        state.page_id,
+                        state.stage_id,
+                        state.status.value,
+                        state.stage_version,
+                        state.config_hash,
+                        state.input_hash,
+                        state.artifact_key,
+                        state.last_run_at,
+                        state.duration_ms,
+                        state.error_message,
+                        state.job_id,
+                    ),
+                )
+
+        await self._run(_go)
+
+    async def list_page_stages_for_page(
+        self,
+        project_id: str,
+        page_id: str,
+    ) -> list[PageStageState]:
+        """All rows for one page; uses the page_stages_proj_page index."""
+
+        def _go() -> list[PageStageState]:
+            with self._cursor() as cur:
+                rows = cur.execute(
+                    "SELECT project_id, page_id, stage_id, status, stage_version, "
+                    "       config_hash, input_hash, artifact_key, last_run_at, "
+                    "       duration_ms, error_message, job_id "
+                    "FROM page_stages "
+                    "WHERE project_id=? AND page_id=?",
+                    (project_id, page_id),
+                ).fetchall()
+            return [_row_to_page_stage(r) for r in rows]
+
+        return await self._run(_go)
+
+    async def list_page_stages_by_status(
+        self,
+        project_id: str,
+        status: PageStageStatus,
+    ) -> list[PageStageState]:
+        """All rows for one project at a given status; uses the proj_status index."""
+
+        def _go() -> list[PageStageState]:
+            with self._cursor() as cur:
+                rows = cur.execute(
+                    "SELECT project_id, page_id, stage_id, status, stage_version, "
+                    "       config_hash, input_hash, artifact_key, last_run_at, "
+                    "       duration_ms, error_message, job_id "
+                    "FROM page_stages "
+                    "WHERE project_id=? AND status=?",
+                    (project_id, status.value),
+                ).fetchall()
+            return [_row_to_page_stage(r) for r in rows]
+
+        return await self._run(_go)
+
+    async def delete_page_stages_for_page(
+        self,
+        project_id: str,
+        page_id: str,
+    ) -> None:
+        """Drop all stages for one page — used by reindex --heal and unsplit."""
+
+        def _go() -> None:
+            with self._cursor() as cur:
+                cur.execute(
+                    "DELETE FROM page_stages WHERE project_id=? AND page_id=?",
+                    (project_id, page_id),
+                )
+
+        await self._run(_go)
+
+
+def _row_to_page_stage(row: tuple) -> PageStageState:
+    """Hydrate a fetched DB row into a PageStageState model.
+
+    Column order matches the SELECT clauses above; keep them aligned.
+    """
+    return PageStageState(
+        project_id=row[0],
+        page_id=row[1],
+        stage_id=row[2],
+        status=PageStageStatus(row[3]),
+        stage_version=row[4],
+        config_hash=row[5],
+        input_hash=row[6],
+        artifact_key=row[7],
+        last_run_at=row[8],
+        duration_ms=row[9],
+        error_message=row[10],
+        job_id=row[11],
+    )
