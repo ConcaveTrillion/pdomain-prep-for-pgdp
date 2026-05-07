@@ -517,12 +517,28 @@ Solves the "stale-process blocks startup" UX gap surfaced 2026-05-07
    Persistence write is best-effort — losing it just means the next
    start falls back to default behavior. Commit: `d958f4b`.
 
-Tests: `tests/test_port_autoselect.py` (4) + `tests/test_port_persistence.py`
-(11). All probes use real loopback sockets — no mocks, no fixtures
-beyond `tmp_path`, sub-millisecond per test on Linux.
+3. **Step 3 — in-UI URL display + `GET /api/server-info`.**
+   `__main__._export_bound_env(host, port)` writes `PGDP_HOST` /
+   `PGDP_PORT` to the process environment after `_pick_port` resolves
+   them, so `Settings()` in the FastAPI app sees the actual bound
+   values rather than the configured defaults. The new
+   `GET /api/server-info` (read-only, unauthenticated, excluded from
+   the OpenAPI schema — same rationale as `/healthz`) returns
+   `{host, port, url}`. The `ServerInfoFooter` SPA component fetches
+   it once on mount (React Query, `staleTime: Infinity`, no refetch),
+   renders the URL as a `select-all` monospaced text node, and exposes
+   a small copy-to-clipboard button. Renders nothing while pending or
+   on error — better empty than misleading. Mounted in `App.tsx` after
+   `<main>` so it sits at the bottom of every page.
 
-Step 3 (in-UI URL display + `GET /api/server-info` endpoint) is the
-remaining sub-requirement and stays in the active roadmap.
+Tests: `tests/test_port_autoselect.py` (4) + `tests/test_port_persistence.py`
+(11) + `tests/test_main_env_passthrough.py` (2) +
+`tests/test_server_info.py` (4) +
+`frontend/src/components/ServerInfoFooter.test.tsx` (4). All probes
+use real loopback sockets — no mocks, no fixtures beyond `tmp_path`,
+sub-millisecond per test on Linux.
 
 - `ce965a2` feat(cli): port auto-select fallback for pgdp-prep (§L1 step 1)
 - `d958f4b` feat(cli): persist last-port across restarts (§L1 step 2)
+- `3234768` feat(api): add GET /api/server-info + bound host/port env passthrough (§L1 step 3 backend)
+- `dd09985` feat(frontend): ServerInfoFooter surfaces bound URL via /api/server-info (§L1 step 3 frontend)

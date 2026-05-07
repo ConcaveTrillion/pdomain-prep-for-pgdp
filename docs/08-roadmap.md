@@ -19,54 +19,11 @@ flow is fully shipped.
 
 ## P0 — local-mode user flow gaps
 
-### L1. Local-mode port auto-select fallback for `pgdp-prep`
-
-**Steps 1 + 2 shipped** — see `08-roadmap-shipped.md` §L1. Core
-EADDRINUSE-fallback (`_pick_port`) and `last-port` persistence under
-`<config_dir>/last-port` are live; explicit `--port N` collision still
-raises. Below is what remains.
-
-#### L1 step 3 — in-UI URL display (sub-req B from original L1)
-
-Belt-and-suspenders: the console print is fine for a fresh session
-but a user who closes their terminal can't recover the URL. The
-running SPA should surface the server's current URL/port somewhere
-persistent and obvious — footer line, "About" / "Server info" panel,
-or a copy-to-clipboard button in a screen corner.
-
-Backend exposes the bound URL via a small read-only endpoint
-(e.g. `GET /api/server-info` returning `{url, port, host}`); frontend
-queries it once on mount and renders the result.
-
-**Plumbing note:** the bound port is decided in `__main__.py` BEFORE
-`uvicorn.run`, so the running app needs a way to learn it. Cleanest:
-`__main__.py` sets `os.environ["PGDP_PORT"] = str(bound_port)` (and
-similarly for host) before the uvicorn handoff so child workers
-inherit the bound values via `Settings`. Endpoint then reads
-`Settings.host` / `Settings.port` directly. Self-hosted / managed
-adapters: harmless, can stay enabled.
-
-**Acceptance:**
-
-- `GET /api/server-info` returns the live bound `{url, port, host}`,
-  not the configured-default one (test by setting `PGDP_PORT=...`
-  and asserting the response).
-- Component or e2e test asserts the SPA renders the bound URL string
-  somewhere user-visible after mount.
-- Copy-to-clipboard affordance present (or equivalent — a selectable
-  text node is acceptable).
-
-**Cross-link:** sibling repo `pd-ocr-labeler-spa` has the matching
-roadmap item for symmetry. Same design should apply to both apps.
-
-### L2. `make run` canonical local entry point
-
-**Shipped 2026-05-07.** Was: developers had to remember to run
-`make frontend-build` before `uv run pgdp-prep` or the SPA served a
-blank page. Now `make run` does both in one shot (frontend bundle then
-launch on `:8765`); `make run-cpu` forces `PGDP_GPU_BACKEND=cpu` for
-debugging / weak-GPU / CUDA-OOM paths. README + CLAUDE.md updated to
-point at `make run` as the canonical local-mode entry point.
+_All P0 local-mode UX items shipped — see `08-roadmap-shipped.md`._
+_§L1 (port auto-select + persistence + in-UI URL display) and §L2_
+_(`make run`/`make run-cpu`) are complete. Next user-visible-progress_
+_candidates live under P1 / P2 below. Cloud/remote-mode items are_
+_parked under "Deferred — remote / cloud mode" at the bottom._
 
 ---
 
@@ -160,7 +117,7 @@ empty when `idx0 == start`, so the first frontmatter page resolves to
 `f000` instead of `f001` despite `frontmatter_page_nbr_start=1`.
 Implementation matches the spec verbatim — `test_compute_prefix_basic_numbering`
 asserts the current `f000` behavior, so this is **not a latent bug**: any
-change to `f001` would be an *intentional* rewrite of the spec, and the
+change to `f001` would be an _intentional_ rewrite of the spec, and the
 asserting test would need to be updated in the same change.
 
 This entry tracks an open spec question, not a fix-on-sight bug. The
