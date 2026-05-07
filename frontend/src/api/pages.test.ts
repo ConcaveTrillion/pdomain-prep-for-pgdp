@@ -19,11 +19,11 @@
  */
 import { http, HttpResponse } from "msw";
 import { afterEach, describe, expect, it } from "vitest";
-import type {
-  ListPagesResponse,
-  PageRecord,
-  UpdatePageRequest,
-} from "./types";
+import type { components } from "./types.gen";
+
+type ListPagesResponse = components["schemas"]["ListPagesResponse"];
+type PageRecord = components["schemas"]["PageRecord"];
+type UpdatePageRequest = components["schemas"]["UpdatePageRequest"];
 import { api, setAuthToken } from "./client";
 import { server } from "../test/server";
 
@@ -42,7 +42,22 @@ function makePage(overrides: Partial<PageRecord> = {}): PageRecord {
     ignore: false,
     page_type: "normal",
     alignment: "default",
-    config_overrides: {},
+    config_overrides: {
+      initial_crop: null,
+      white_space_additional: null,
+      threshold_level: null,
+      fuzzy_pct: null,
+      pixel_count_columns: null,
+      pixel_count_rows: null,
+      skip_auto_deskew: null,
+      deskew_before_crop: null,
+      deskew_after_crop: null,
+      do_morph: null,
+      skip_denoise: null,
+      use_ocr_bbox_edge: null,
+      rotated_standard: null,
+      single_dimension_rescale: null,
+    },
     splits: [],
     illustration_regions: [],
     source_key: "projects/prj_abc123/source/scan_0001.png",
@@ -52,6 +67,8 @@ function makePage(overrides: Partial<PageRecord> = {}): PageRecord {
     processing_status: "pending",
     processing_job_id: null,
     processing_error: null,
+    last_processed_at: null,
+    outputs: [],
     ...overrides,
   };
 }

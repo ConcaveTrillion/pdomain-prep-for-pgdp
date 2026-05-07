@@ -23,7 +23,7 @@ interface OcrPageResponse {
 
 // ─── §9a delete-words wire shapes ──────────────────────────────────
 // Hand-mirrored from `api/data/pages.py::DeleteWordsRequest` /
-// `DeleteWordsResponse`. Lives here (not in `api/types.ts`) so it
+// `DeleteWordsResponse`. Lives here (not pulled from types.gen.ts) so it
 // won't be clobbered next time `make openapi-export` regenerates the
 // generated types — same convention `PageWorkbenchPage` uses for
 // `ProcessPageRequest`/`Response` (see tick 11). When the OpenAPI

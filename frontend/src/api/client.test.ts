@@ -11,10 +11,10 @@
  */
 import { http, HttpResponse } from "msw";
 import { afterEach, describe, expect, it } from "vitest";
-import type {
-  CreateProjectRequest,
-  CreateProjectResponse,
-} from "./types";
+import type { components } from "./types.gen";
+
+type CreateProjectRequest = components["schemas"]["CreateProjectRequest"];
+type CreateProjectResponse = components["schemas"]["CreateProjectResponse"];
 import { api, setAuthToken } from "./client";
 import { server } from "../test/server";
 
@@ -46,6 +46,7 @@ describe("api.post against /api/data/projects (msw)", () => {
             proof_page_count: 0,
             storage_prefix: "projects/prj_abc123",
             archived: false,
+            pipeline_state: { steps: {} },
             config: {
               book_name: "Belloc — The Four Men",
               source_uri: "uploads/prj_abc123/source.zip",
