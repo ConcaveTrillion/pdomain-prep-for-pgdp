@@ -46,3 +46,27 @@ repos:
         language: system
         files: ^frontend/(src/.*\.(ts|tsx)|tsconfig.*\.json|package(-lock)?\.json|vite\.config\.ts)$
         pass_filenames: false
+    -   id: frontend-eslint
+        name: frontend eslint
+        description: ESLint flat-config check for the React SPA.
+        # Same mise-activation prelude as frontend-tsc — see the
+        # comment above for why bash -c + the activation guard.
+        entry: bash -c 'if command -v mise >/dev/null 2>&1; then eval "$(mise activate bash --shims)" 2>/dev/null || true; fi; cd frontend && exec npm run --silent lint'
+        language: system
+        # Match what eslint actually lints: SPA source, the flat config
+        # itself, and dependency manifests (a new dep can change rules
+        # via plugins). Ignore patterns inside frontend/eslint.config.js
+        # exclude `dist/`, `node_modules/`, and `src/api/types.gen.ts`.
+        files: ^frontend/(src/.*\.(ts|tsx)|eslint\.config\.js|package(-lock)?\.json)$
+        pass_filenames: false
+    -   id: frontend-prettier
+        name: frontend prettier --check
+        description: Prettier format check for the React SPA.
+        entry: bash -c 'if command -v mise >/dev/null 2>&1; then eval "$(mise activate bash --shims)" 2>/dev/null || true; fi; cd frontend && exec npm run --silent format:check'
+        language: system
+        # Prettier covers a broader file set than ESLint (CSS, JSON,
+        # config files); keep the path filter wide enough to match.
+        # The .prettierignore handles dist/, node_modules/, generated
+        # types.gen.ts, and package-lock.json.
+        files: ^frontend/(src/.*|\.prettierrc\.json|\.prettierignore|package(-lock)?\.json|tsconfig.*\.json|vite\.config\.ts|vitest\.config\.ts|tailwind\.config\.ts|postcss\.config\.js|eslint\.config\.js)$
+        pass_filenames: false

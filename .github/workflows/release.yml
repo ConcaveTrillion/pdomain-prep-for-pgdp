@@ -68,6 +68,10 @@ jobs:
           # Re-enable once the lockfile is committed.
       - name: npm install
         run: cd frontend && npm install
+      - name: ESLint
+        run: cd frontend && npm run lint
+      - name: Prettier (format:check)
+        run: cd frontend && npm run format:check
       - name: Vitest (SPA unit tests)
         run: cd frontend && npm test
       - name: Build

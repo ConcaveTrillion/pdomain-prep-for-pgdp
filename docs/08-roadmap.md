@@ -620,26 +620,6 @@ a one-line code (or spec) edit plus a deliberate test update.
 1-7 into a table). It's grown again. Fold older "Done" sections into the
 table once they're stable.
 
-### 26. Frontend ESLint + Prettier pre-commit hooks
-
-`.pre-commit-config.yaml` runs `markdownlint-cli2` and `frontend-tsc` but
-no JS/TS lint or format check. `frontend/package.json` already has
-`"lint": "eslint . --ext .ts,.tsx"` but no `eslint.config.*` flat config
-in `frontend/`, and Prettier isn't wired at all (no `.prettierrc`, no
-`format` / `format:check` scripts, no devDep).
-
-**Plan:**
-
-1. Land an `eslint.config.ts` (flat) under `frontend/`, add Prettier as a
-   devDep with `.prettierrc` + `format` / `format:check` scripts, confirm
-   `npm run lint` and `npm run format:check` are green from a clean tree.
-2. Add two `repo: local` hooks (parallel to `frontend-tsc`) that shell
-   into `frontend/` for `npm run lint` and `npm run format:check`,
-   scoped to `^frontend/.*\.(ts|tsx|js|jsx|css|json)$`.
-
-**Rationale:** workspace alignment with pd-ocr-labeler-spa, which
-deferred the same hooks pending its M0 frontend-lint scaffold (D-037).
-
 ---
 
 ## P5 — Stretch

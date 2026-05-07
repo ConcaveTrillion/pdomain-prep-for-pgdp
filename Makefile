@@ -202,6 +202,21 @@ frontend-test: ## Run the SPA's vitest suite (jsdom + msw)
 	@$(call _npm,install)
 	@$(call _npm,test)
 
+frontend-lint: ## Run ESLint on the SPA
+	@echo "🧹 Running frontend ESLint..."
+	@$(call _npm,install)
+	@$(call _npm,run lint)
+
+frontend-format-check: ## Check SPA formatting with Prettier
+	@echo "🎨 Checking frontend formatting (Prettier)..."
+	@$(call _npm,install)
+	@$(call _npm,run format:check)
+
+frontend-format: ## Apply Prettier formatting to the SPA
+	@echo "🎨 Applying Prettier to the frontend..."
+	@$(call _npm,install)
+	@$(call _npm,run format)
+
 openapi-export: ## Regenerate openapi.json + frontend/src/api/types.gen.ts
 	@echo "📤 Exporting OpenAPI schema and regenerating TS types..."
 	# Write to repo-root openapi.json — the committed source-of-truth that
@@ -256,7 +271,7 @@ clean: ## Clean cache + build artifacts
 	find . -type d -name ".ruff_cache" -exec rm -rf {} + 2>/dev/null || true
 	rm -rf dist/ src/pd_prep_for_pgdp/static/ frontend/dist/ 2>/dev/null || true
 
-ci: setup pre-commit-check test frontend-test build ## Full CI pipeline
+ci: setup pre-commit-check test frontend-lint frontend-format-check frontend-test build ## Full CI pipeline
 
 # ---------------------------------------------------------------------------
 # Local editable workflow (requires ../pd-book-tools sibling checkout)

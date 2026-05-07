@@ -11,6 +11,32 @@ not re-paste roadmap prose here.
 
 ---
 
+## §26 — Frontend ESLint + Prettier pre-commit hooks
+
+ESLint flat config (`frontend/eslint.config.js`) + Prettier
+(`.prettierrc.json`, `.prettierignore`) live in `frontend/`. Pinned to
+`eslint@^9` + `eslint-plugin-react-hooks@^5` (the v10 / hooks-7 stack
+flagged valid React Query initial-data sync as
+`set-state-in-effect`; out of scope for the toolchain commit). Plugin
+set: `@eslint/js` recommended, `typescript-eslint` recommended,
+`react-hooks`, `react-refresh`, `eslint-config-prettier` last. Generated
+`src/api/types.gen.ts` excluded from both lint and format. `npm run
+lint` 0-errors / 13 `no-explicit-any` warnings (intentional, at Konva /
+msw / fetch-JSON adapter seams). Prettier defaults match in-tree style;
+24 files normalised in a separate format-only commit.
+
+Pre-commit hooks `frontend-eslint` + `frontend-prettier` parallel the
+existing `frontend-tsc` hook, share its mise-shim activation prelude,
+and use the same `language: system` style. Make targets:
+`frontend-lint`, `frontend-format`, `frontend-format-check`. `make ci`
+chains `frontend-lint frontend-format-check` between `test` and
+`frontend-test`. GHA `build-frontend` job runs `npm run lint` +
+`npm run format:check` between `npm install` and `npm test`.
+
+- `7f804ac` feat(frontend): ESLint flat config + Prettier toolchain (P4 #26 step 1)
+- `e1be5b5` style(frontend): apply Prettier --write across the SPA (P4 #26 step 1)
+- (this commit) chore(hooks/ci): wire frontend-eslint + frontend-prettier into pre-commit, Make, GHA
+
 ## §5 — Per-page batch_process_pages progress
 
 Backend SSE streams `current_page=idx0` per item; SPA surfaces it in four
