@@ -77,17 +77,28 @@ def _make_placeholder(stage_id: str) -> Callable[..., Any]:
     return _placeholder
 
 
-# ─── Real implementations: grayscale, threshold, invert (M2 Slice 2) ────────
+# ─── Real implementations: pure-function chain (M2 Slice 2 + 6) ─────────────
 #
 # The full image-processing chain still lives in process_page.py for now;
 # extracting all 22 stages atomically would be a 500-line refactor. These
-# three are the simplest pure-function transformations and are independent
-# enough to wire into the registry without touching process_page yet.
+# stages are the simplest pure-function transformations on a single image
+# and are independent enough to wire into the registry without touching
+# process_page yet.
 #
 # Each takes the canonical input type per `Stage.input_type` (an ndarray
 # at the right shape) and returns the canonical output type. The runner
 # is responsible for hashing, dual-writing, and decoding/encoding bytes
 # at the disk boundary.
+#
+# `decode_source` / `initial_crop` / `manual_deskew_pre` are pass-through
+# stages at this iteration: the runner already cv2.imdecodes parent bytes
+# before calling the impl (so `decode_source` is identity in ndarray
+# space), and `initial_crop` / `manual_deskew_pre` honour their
+# default-config "no-op" branches in `process_page_cpu` (no crop / no
+# rotation) until ResolvedPageConfig plumbing lands. Carving them out
+# now — even as no-ops — is the load-bearing change: it makes the chain
+# runnable end-to-end from `ingest_source` through `invert` without
+# manual SQLite seeding, which is the M2 smoke-test pass criterion.
 
 
 def _grayscale_cpu(image: Any) -> Any:
@@ -132,10 +143,51 @@ def _invert_cpu(image: Any) -> Any:
     return invert_image(image)
 
 
+def _decode_source_cpu(image: Any) -> Any:
+    """Pass through the already-decoded source image unchanged.
+
+    The runner cv2.imdecodes parent bytes before calling the impl, so by
+    the time `decode_source` runs the input is already a 3-channel uint8
+    ndarray. Persisting it as its own artifact (Q3 every-intermediate-
+    persistence) gives `initial_crop` a well-defined parent path while
+    keeping the registry impl pure in ndarray space.
+    """
+    return image
+
+
+def _initial_crop_cpu(image: Any) -> Any:
+    """Apply project/per-page initial-crop insets, or pass through at default.
+
+    Mirrors `process_page_cpu`'s 4d branch: when the resolved
+    `(left, right, top, bottom)` insets are all zero the image is
+    forwarded unchanged. ResolvedPageConfig plumbing through the runner
+    isn't wired yet (Q5 follow-up), so this iteration's impl always
+    takes the no-crop branch — that's the documented default and the
+    one the M2 smoke-test exercises. When the config plumbing lands the
+    signature gains a `cfg: ResolvedPageConfig` kwarg and the actual
+    `crop_edges` call moves here.
+    """
+    return image
+
+
+def _manual_deskew_pre_cpu(image: Any) -> Any:
+    """Apply the optional pre-crop manual rotation, or pass through at default.
+
+    Mirrors `process_page_cpu`'s 4e branch: rotation only fires when
+    `cfg.deskew_before_crop is not None`. At default the image is
+    forwarded unchanged. Same ResolvedPageConfig follow-up as
+    `initial_crop` — the impl learns about cfg later.
+    """
+    return image
+
+
 # ─── Registry assembly ──────────────────────────────────────────────────────
 
 # Real implementations registered for cpu. Keys must be in `PAGE_STAGE_IDS`.
 _REAL_CPU_IMPLS: dict[str, Callable[..., Any]] = {
+    "decode_source": _decode_source_cpu,
+    "initial_crop": _initial_crop_cpu,
+    "manual_deskew_pre": _manual_deskew_pre_cpu,
     "grayscale": _grayscale_cpu,
     "threshold": _threshold_cpu,
     "invert": _invert_cpu,

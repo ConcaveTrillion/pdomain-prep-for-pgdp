@@ -296,16 +296,17 @@ async def test_run_stage_handles_stage_not_implemented(
     with a "not yet implemented in registry" message, not the generic engine
     error."""
     project_id, page_id = "p1", "0000"
-    # `decode_source` is a registry placeholder at Slice 2 (no real impl yet).
-    # Seed its only dep (`ingest_source`) clean — give it a valid PNG so the
-    # parent-loader doesn't fail before the registry is consulted.
+    # `find_content_edges` is a registry placeholder at this iteration
+    # (no real impl yet — still a closure-bound StageNotImplemented stub).
+    # Seed its only dep (`invert`) clean so the parent-loader doesn't fail
+    # before the registry is consulted.
     payload = _checkerboard_bgr_png()
     await _seed_clean_parents(
         db,
         tmp_path,
         project_id,
         page_id,
-        parent_stages=["ingest_source"],
+        parent_stages=["invert"],
         payload=payload,
     )
 
@@ -315,12 +316,12 @@ async def test_run_stage_handles_stage_not_implemented(
             database=db,
             project_id=project_id,
             page_id=page_id,
-            stage_id="decode_source",
+            stage_id="find_content_edges",
         )
     # Either the wrapper or the persisted error_message must surface the
     # registry's placeholder wording (substring match — exact phrase tracks
     # `_make_placeholder` in stage_registry.py) so the chip rail can explain.
-    persisted = (await db.get_page_stage(project_id, page_id, "decode_source")).error_message
+    persisted = (await db.get_page_stage(project_id, page_id, "find_content_edges")).error_message
     assert "no implementation registered" in str(exc_info.value).lower() or (
         persisted is not None and "no implementation registered" in persisted.lower()
     )

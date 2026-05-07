@@ -165,3 +165,101 @@ def test_invert_cpu_idempotent_after_two_applications() -> None:
     binary = np.random.default_rng(seed=42).integers(0, 256, size=(10, 10), dtype=np.uint8)
     out = fn(fn(binary))
     assert np.array_equal(out, binary)
+
+
+# ─── Real impl: decode_source ───────────────────────────────────────────────
+#
+# `decode_source` sits between `ingest_source` (raw source bytes on disk)
+# and `initial_crop`. The runner already decodes parent bytes via cv2.imdecode
+# when loading parent artifacts, so by the time decode_source's impl is
+# called the input is *already* a decoded ndarray. This stage's contract
+# at the registry layer is therefore "pass through the decoded image" —
+# the decode happened in the runner. Persisting it as its own artifact
+# keeps Q3 (every-intermediate-persistence) honest and gives downstream
+# stages a well-defined parent path.
+
+
+def test_decode_source_cpu_passes_through_image() -> None:
+    """decode_source returns the input ndarray unchanged.
+
+    The runner decodes parent bytes before calling the impl; decode_source's
+    job at the registry layer is to crystallise that decode as a persisted
+    artifact. The transformation is identity in ndarray space.
+    """
+    fn = get_stage_impl("decode_source", "cpu")
+    img = _solid_color_bgr()
+    out = fn(img)
+    assert isinstance(out, np.ndarray)
+    assert out.dtype == np.uint8
+    assert np.array_equal(out, img)
+
+
+def test_decode_source_cpu_preserves_dimensions() -> None:
+    """decode_source is shape-preserving."""
+    fn = get_stage_impl("decode_source", "cpu")
+    img = _solid_color_bgr(h=50, w=70)
+    out = fn(img)
+    assert out.shape == img.shape
+
+
+# ─── Real impl: initial_crop ───────────────────────────────────────────────
+#
+# `initial_crop` reads cfg.initial_crop / cfg.initial_crop_all (4-tuple of
+# pixel insets per side). When neither is set / both are zero — the
+# default for a fresh project before the user configures crop — the
+# stage is a no-op. ResolvedPageConfig plumbing through the runner lands
+# in a later slice; for now the registered impl honours the default
+# (no-crop) behavior so the chain is runnable end-to-end.
+
+
+def test_initial_crop_cpu_passes_through_when_no_config() -> None:
+    """initial_crop with default config is a no-op pass-through.
+
+    Matches `process_page_cpu`'s 4d branch: `if any(crop): img =
+    crop_edges(...)`. When `crop == (0,0,0,0)` (the default), the image
+    is forwarded unchanged. Until ResolvedPageConfig is wired into the
+    runner, the registered impl always takes the no-crop branch.
+    """
+    fn = get_stage_impl("initial_crop", "cpu")
+    img = _solid_color_bgr()
+    out = fn(img)
+    assert isinstance(out, np.ndarray)
+    assert np.array_equal(out, img)
+
+
+def test_initial_crop_cpu_preserves_dimensions_at_default() -> None:
+    """At default config initial_crop is shape-preserving."""
+    fn = get_stage_impl("initial_crop", "cpu")
+    img = _solid_color_bgr(h=80, w=120)
+    out = fn(img)
+    assert out.shape == img.shape
+
+
+# ─── Real impl: manual_deskew_pre ───────────────────────────────────────────
+#
+# `manual_deskew_pre` reads cfg.deskew_before_crop (a degree value, default
+# None). When None, the stage is a no-op. ResolvedPageConfig plumbing
+# through the runner lands later; for now the impl honours the default
+# (no-rotation) behavior so the chain is runnable.
+
+
+def test_manual_deskew_pre_cpu_passes_through_when_no_config() -> None:
+    """manual_deskew_pre with default config (no rotation) is a no-op.
+
+    Matches `process_page_cpu`'s 4e branch: rotation only fires when
+    cfg.deskew_before_crop is not None. Until ResolvedPageConfig reaches
+    the runner the impl always takes the no-rotation branch.
+    """
+    fn = get_stage_impl("manual_deskew_pre", "cpu")
+    img = _solid_color_bgr()
+    out = fn(img)
+    assert isinstance(out, np.ndarray)
+    assert np.array_equal(out, img)
+
+
+def test_manual_deskew_pre_cpu_preserves_dimensions_at_default() -> None:
+    """At default config manual_deskew_pre is shape-preserving."""
+    fn = get_stage_impl("manual_deskew_pre", "cpu")
+    img = _solid_color_bgr(h=40, w=50)
+    out = fn(img)
+    assert out.shape == img.shape
