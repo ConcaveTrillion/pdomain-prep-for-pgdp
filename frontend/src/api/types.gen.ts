@@ -266,6 +266,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/data/projects/{project_id}/pages/{idx0}/stages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Page Stages
+         * @description Return ordered per-page stage state for the 22-stage DAG.
+         *
+         *     Spec: `docs/specs/pipeline-task-model.md` §"API surface" (§Per-page
+         *     stage routes). Lazy-init contract (Q1-followup): if no rows exist
+         *     yet for this page, materialise 22 ``not-run`` rows in one
+         *     transaction (`INSERT OR IGNORE`) and return them in topological
+         *     order. Concurrent first-touch reads converge on exactly 22 rows.
+         *
+         *     Auth follows the existing pattern — every project read is filtered
+         *     by `user.user_id`. 404 (not 403) is returned on miss to avoid leaking
+         *     project existence to non-owners.
+         */
+        get: operations["list_page_stages"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/data/system/defaults": {
         parameters: {
             query?: never;
@@ -1200,6 +1230,54 @@ export interface components {
             /** Ocr Engine */
             ocr_engine: ("doctr" | "tesseract") | null;
         };
+        /**
+         * PageStageState
+         * @description One per-page stage row — state of stage `stage_id` on page `page_id`.
+         *
+         *     Spec: `docs/specs/pipeline-task-model.md` §"SQLite schema" (Q1 lock).
+         *
+         *     `page_id` is a string so it can encode split-child identity later (e.g.
+         *     `0042/splits/a` for the first split-child of page 42). For root pages
+         *     today, `page_id` is the zero-padded 4-digit `idx0`.
+         */
+        PageStageState: {
+            /** Project Id */
+            project_id: string;
+            /** Page Id */
+            page_id: string;
+            /** Stage Id */
+            stage_id: string;
+            /** @default not-run */
+            status: components["schemas"]["PageStageStatus"];
+            /**
+             * Stage Version
+             * @default 1
+             */
+            stage_version: number;
+            /** Artifact Key */
+            artifact_key: string | null;
+            /** Config Hash */
+            config_hash: string | null;
+            /** Input Hash */
+            input_hash: string | null;
+            /** Last Run At */
+            last_run_at: number | null;
+            /** Duration Ms */
+            duration_ms: number | null;
+            /** Error Message */
+            error_message: string | null;
+            /** Job Id */
+            job_id: string | null;
+        };
+        /**
+         * PageStageStatus
+         * @description Per-stage status — see canonical spec §SQLite schema (Q1 lock).
+         *
+         *     `not-applicable` indicates a stage is skipped because of page type
+         *     (e.g. blank-page short-circuit skips `decode_source` … `morph_fill`).
+         * @enum {string}
+         */
+        PageStageStatus: "not-run" | "running" | "clean" | "dirty" | "failed" | "not-applicable";
         /**
          * PageType
          * @enum {string}
@@ -2203,6 +2281,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeleteWordsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_page_stages: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                idx0: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PageStageState"][];
                 };
             };
             /** @description Validation Error */

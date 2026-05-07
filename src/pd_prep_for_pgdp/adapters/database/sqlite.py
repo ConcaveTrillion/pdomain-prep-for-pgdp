@@ -429,6 +429,43 @@ class SqliteDatabase:
 
         await self._run(_go)
 
+    async def init_page_stages_for_page(
+        self,
+        project_id: str,
+        page_id: str,
+    ) -> int:
+        """Idempotently insert one ``not-run`` row per canonical stage_id.
+
+        Lazy side of the dual-write reconciliation contract (Q1-followup):
+        the first time anyone reads a page's stage state, all 22 rows
+        materialise so subsequent reads are simple lookups. Concurrent
+        callers race safely — `INSERT OR IGNORE` skips the second
+        inserter's row at the composite PK.
+
+        Returns the number of rows actually inserted (0 if all 22 already
+        exist).
+        """
+
+        def _go() -> int:
+            with self._cursor() as cur:
+                rows_before = cur.execute(
+                    "SELECT COUNT(*) FROM page_stages WHERE project_id=? AND page_id=?",
+                    (project_id, page_id),
+                ).fetchone()[0]
+                cur.executemany(
+                    "INSERT OR IGNORE INTO page_stages "
+                    "(project_id, page_id, stage_id, status, stage_version) "
+                    "VALUES (?, ?, ?, 'not-run', 1)",
+                    [(project_id, page_id, sid) for sid in PAGE_STAGE_IDS],
+                )
+                rows_after = cur.execute(
+                    "SELECT COUNT(*) FROM page_stages WHERE project_id=? AND page_id=?",
+                    (project_id, page_id),
+                ).fetchone()[0]
+                return rows_after - rows_before
+
+        return await self._run(_go)
+
 
 def _row_to_page_stage(row: tuple) -> PageStageState:
     """Hydrate a fetched DB row into a PageStageState model.

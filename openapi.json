@@ -937,6 +937,67 @@
         }
       }
     },
+    "/api/data/projects/{project_id}/pages/{idx0}/stages": {
+      "get": {
+        "tags": [
+          "pages"
+        ],
+        "summary": "List Page Stages",
+        "description": "Return ordered per-page stage state for the 22-stage DAG.\n\nSpec: `docs/specs/pipeline-task-model.md` \u00a7\"API surface\" (\u00a7Per-page\nstage routes). Lazy-init contract (Q1-followup): if no rows exist\nyet for this page, materialise 22 ``not-run`` rows in one\ntransaction (`INSERT OR IGNORE`) and return them in topological\norder. Concurrent first-touch reads converge on exactly 22 rows.\n\nAuth follows the existing pattern \u2014 every project read is filtered\nby `user.user_id`. 404 (not 403) is returned on miss to avoid leaking\nproject existence to non-owners.",
+        "operationId": "list_page_stages",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "idx0",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Idx0"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PageStageState"
+                  },
+                  "title": "Response List Page Stages"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/data/system/defaults": {
       "get": {
         "tags": [
@@ -3693,6 +3754,138 @@
         ],
         "title": "PageSplit",
         "description": "Replaces the notebook's `PageSectionSplit`. Coords in PROCESSED image space."
+      },
+      "PageStageState": {
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "page_id": {
+            "type": "string",
+            "title": "Page Id"
+          },
+          "stage_id": {
+            "type": "string",
+            "title": "Stage Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/PageStageStatus",
+            "default": "not-run"
+          },
+          "stage_version": {
+            "type": "integer",
+            "title": "Stage Version",
+            "default": 1
+          },
+          "artifact_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Key"
+          },
+          "config_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Hash"
+          },
+          "input_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Hash"
+          },
+          "last_run_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Run At"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id",
+          "page_id",
+          "stage_id",
+          "status",
+          "stage_version",
+          "artifact_key",
+          "config_hash",
+          "input_hash",
+          "last_run_at",
+          "duration_ms",
+          "error_message",
+          "job_id"
+        ],
+        "title": "PageStageState",
+        "description": "One per-page stage row \u2014 state of stage `stage_id` on page `page_id`.\n\nSpec: `docs/specs/pipeline-task-model.md` \u00a7\"SQLite schema\" (Q1 lock).\n\n`page_id` is a string so it can encode split-child identity later (e.g.\n`0042/splits/a` for the first split-child of page 42). For root pages\ntoday, `page_id` is the zero-padded 4-digit `idx0`."
+      },
+      "PageStageStatus": {
+        "type": "string",
+        "enum": [
+          "not-run",
+          "running",
+          "clean",
+          "dirty",
+          "failed",
+          "not-applicable"
+        ],
+        "title": "PageStageStatus",
+        "description": "Per-stage status \u2014 see canonical spec \u00a7SQLite schema (Q1 lock).\n\n`not-applicable` indicates a stage is skipped because of page type\n(e.g. blank-page short-circuit skips `decode_source` \u2026 `morph_fill`)."
       },
       "PageType": {
         "type": "string",

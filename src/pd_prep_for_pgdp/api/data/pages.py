@@ -20,8 +20,10 @@ from ...core.models import (
     PageProcessingStatus,
     PageRecord,
     PageSplit,
+    PageStageState,
     PageType,
 )
+from ...core.pipeline.stage_dag import topological_order
 from ..dependencies import get_database, get_storage, get_user
 
 log = logging.getLogger(__name__)
@@ -396,3 +398,63 @@ async def delete_page_words(
         remaining_words=survivors,
         text=new_text,
     )
+
+
+# ─── Per-page DAG stages (M1 §C) ─────────────────────────────────────────────
+
+
+def _page_id_for_idx0(idx0: int) -> str:
+    """Canonical page_id for a root page — zero-padded 4-digit idx0.
+
+    Spec §"SQLite schema": `page_id` is "zero-padded idx0 for root, with
+    /splits/<suffix> chain for children". Root-only at M1 (no splits yet).
+    """
+    return f"{idx0:04d}"
+
+
+@router.get(
+    "/projects/{project_id}/pages/{idx0}/stages",
+    response_model=list[PageStageState],
+    operation_id="list_page_stages",
+)
+async def list_page_stages(
+    project_id: str,
+    idx0: int,
+    user: UserContext = Depends(get_user),
+    db: IDatabase = Depends(get_database),
+) -> list[PageStageState]:
+    """Return ordered per-page stage state for the 22-stage DAG.
+
+    Spec: `docs/specs/pipeline-task-model.md` §"API surface" (§Per-page
+    stage routes). Lazy-init contract (Q1-followup): if no rows exist
+    yet for this page, materialise 22 ``not-run`` rows in one
+    transaction (`INSERT OR IGNORE`) and return them in topological
+    order. Concurrent first-touch reads converge on exactly 22 rows.
+
+    Auth follows the existing pattern — every project read is filtered
+    by `user.user_id`. 404 (not 403) is returned on miss to avoid leaking
+    project existence to non-owners.
+    """
+    project = await db.get_project(project_id)
+    if project is None or project.owner_id != user.user_id:
+        raise HTTPException(404, "project not found")
+    page = await db.get_page(project_id, idx0)
+    if page is None:
+        raise HTTPException(404, "page not found")
+
+    page_id = _page_id_for_idx0(idx0)
+    # Lazy-init: idempotent + concurrency-safe via `INSERT OR IGNORE` on the
+    # composite PK.
+    await db.init_page_stages_for_page(project_id, page_id)
+    rows = await db.list_page_stages_for_page(project_id, page_id)
+
+    # Order by topological order — matches spec §"Per-page stage DAG"
+    # (sources first). Stages absent from the DAG (shouldn't happen because
+    # the CHECK constraint pins to PAGE_STAGE_IDS) are silently dropped.
+    by_id: dict[str, PageStageState] = {r.stage_id: r for r in rows}
+    ordered: list[PageStageState] = []
+    for stage in topological_order():
+        row = by_id.get(stage.id)
+        if row is not None:
+            ordered.append(row)
+    return ordered
