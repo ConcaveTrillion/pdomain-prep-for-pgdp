@@ -223,6 +223,101 @@ the active roadmap by oversight; moved here for accuracy.
 - Hook lives at `.pre-commit-config.yaml:25-32`; predates the
   `08-roadmap.md` / `08-roadmap-shipped.md` split (commit `92fa185`).
 
+## §9 — Vitest + msw for the SPA
+
+Acceptance met across ticks 6–14: Vitest + jsdom + msw scaffolding,
+pure-function coverage for `lineDiff` / `wordOffsets`, three msw-backed
+wire flows (create-project `POST /api/data/projects`; per-page
+`GET /pages?review_needed` + `PATCH /pages/{idx0}` for tagging;
+`POST /api/gpu/process-page` plus the array-rewrite-on-PATCH contract
+the workbench uses for `splits[]` / `illustration_regions[]`), CI
+wiring (`make ci` chains `frontend-test` between `test` and `build`;
+GHA `build-frontend` runs vitest between `npm install` and
+`npm run build`), and a happy-path mount of `ProjectListPage`'s
+create-project flow under `QueryClientProvider` + `MemoryRouter`. The
+inline `__inline_tests` blocks in `lineDiff.ts` / `wordOffsets.ts`
+were removed in tick 9 once the standalone test files locked the
+contract.
+
+Open follow-ups (cosmetic, not roadmap-tracked): error / uploading
+UI-state assertions on the create-project modal — deferred until the
+modal is extracted from `ProjectListPage` for its own reasons; the
+happy-path mount already proves the wiring.
+
+- Tick 1 toolchain bring-up; tick 6 pure-function coverage; tick 7
+  CI wiring; tick 8 first msw integration test; tick 9
+  `__inline_tests` removal; tick 10 page-tagger flow; tick 11
+  workbench drag-create flow; tick 14 `ProjectListPage` mount-test.
+- See `git log -- frontend/vitest.config.ts frontend/src/test/
+  frontend/src/api/*.test.ts frontend/src/lib/*.test.ts
+  frontend/src/pages/ProjectListPage.test.tsx` for the audit trail.
+
+## §9a — Word-delete editor on TextReviewPage
+
+Backend + frontend v1 + marquee bulk-select + a11y polish all landed.
+
+- **Backend (tick 21):** `DELETE /api/data/projects/{id}/pages/{idx0}/words`
+  accepts `{word_ids, split_suffix?}`, hard-rewrites
+  `<root>.words.json` minus the deleted ids, and rewrites `<root>.txt`
+  from the survivors via `_rebuild_text_from_words` (y-midpoint line
+  clustering) in `api/data/pages.py`. Unknown ids skipped silently
+  (idempotent); empty list is a no-op. Covered by
+  `tests/test_delete_page_words.py` (9 tests).
+- **Frontend v1 (tick 22):** `WordBboxOverlay` gained `selectedWordIds`
+  and `onWordToggleSelect` props (red stroke/fill for selection vs. the
+  blue active-word highlight). `TextReviewPage` owns the selection
+  state, fires the mutation on Delete/Backspace via a scope-aware
+  window keydown handler (preserves character-deletion in
+  textareas/inputs/contentEditable), and exposes a red
+  "Delete N words" toolbar button mirroring the keyboard path.
+- **Marquee bulk-select (tick 23):** `frontend/src/lib/marquee.ts` is
+  the pure-function home: `normaliseMarquee` (direction-invariant
+  rect) and `computeMarqueeSelection` (partial overlap selects;
+  edge-only contact does not; words without `id` are skipped).
+  `WordBboxOverlay` runs the Konva pointer capture in image-natural
+  pixel space, draws a translucent indigo preview rect, and emits
+  `onMarqueeSelect(ids, additive)` on mouseup. Shift-drag unions with
+  the existing selection; plain drag replaces. Zero-extent marquees
+  are suppressed so a stray click doesn't wipe a careful per-word
+  selection.
+- **Polish + a11y (tick 24):** `Escape` clears the selection (same
+  scope rules as Delete/Backspace), a neutral "Clear selection"
+  button mounts next to the red Delete button while the selection is
+  non-empty, and an `sr-only` `role="status" aria-live="polite"`
+  region narrates "N words selected" / "Cleared selection" /
+  "Deleted N words" to screen readers.
+- **Generated-types swap (tick 25):** `DeleteWordsRequest` /
+  `DeleteWordsResponse` in `TextReviewPage.tsx` are now
+  `components["schemas"]["..."]` aliases from `api/types.gen.ts`;
+  the hand-mirrored interfaces are gone.
+
+Coverage: 9 backend tests + ~14 frontend tests across `marquee.test.ts`,
+`WordBboxOverlay.test.tsx`, and `TextReviewPage.test.tsx`.
+
+Open follow-ups (still tracked elsewhere; not on the active roadmap):
+
+- **Undo / soft-delete:** waiting on a user schema decision —
+  `OcrWord.deleted: bool` server-side flag (with a flip endpoint and
+  `remaining_words` filtering) vs. a client-side debounced commit
+  window. Either layers cleanly onto the v1 wire contract;
+  `remaining_words` already lets the client be agnostic. See
+  `MEMORY.md` /
+  `project_pd_prep_for_pgdp_blocked_slices.md` for the active block
+  notes.
+- **Marquee runtime smoke-test in `make frontend-dev`:** the Konva
+  pointer-capture preview rect hasn't been exercised in a real
+  browser. Vitest covers the math + handler bodies. Worth a
+  five-minute manual pass next time a tick already has a dev server
+  running; not appropriate for an overnight loop.
+
+- See `git log -- src/pd_prep_for_pgdp/api/data/pages.py
+  tests/test_delete_page_words.py
+  frontend/src/lib/marquee.ts frontend/src/lib/marquee.test.ts
+  frontend/src/components/WordBboxOverlay.tsx
+  frontend/src/components/WordBboxOverlay.test.tsx
+  frontend/src/pages/TextReviewPage.tsx
+  frontend/src/pages/TextReviewPage.test.tsx` for the audit trail.
+
 ## §28 — Guard `upgrade-deps` against silent dev-local revert
 
 `scripts/detect_dev_local.py` exits 0 when an editable `pd-book-tools`
