@@ -96,11 +96,19 @@ describe("ProjectListPage CreateProjectModal a11y", () => {
       await screen.findByRole("button", { name: /new project/i }),
     );
 
-    const dialog = await screen.findByRole("dialog", { name: /new project/i });
-    expect(dialog.getAttribute("aria-modal")).toBe("true");
-    // Scroll-lock pinned to <body> while modal is open so background
-    // doesn't scroll under the dialog.
-    expect(document.body.style.overflow).toBe("hidden");
+    // Modality is enforced by Radix's focus trap + body scroll-lock,
+    // not by the `aria-modal` attribute (Radix v1.1+ deliberately omits
+    // it because the WAI-ARIA modal pattern is satisfied by the focus
+    // trap alone). The cba526e contract still holds in spirit: the
+    // dialog is discoverable by `role="dialog"` with its accessible name,
+    // and background scroll is locked while it's open.
+    //
+    // Scroll-lock under Radix uses `react-remove-scroll-bar`, which
+    // sets `data-scroll-locked` on <body> and applies `overflow: hidden`
+    // via an injected stylesheet (jsdom doesn't compute the stylesheet,
+    // so we assert the attribute the lock manager actually owns).
+    await screen.findByRole("dialog", { name: /new project/i });
+    expect(document.body.hasAttribute("data-scroll-locked")).toBe(true);
   });
 
   it("closes when the user presses Escape and restores body overflow", async () => {
@@ -117,7 +125,8 @@ describe("ProjectListPage CreateProjectModal a11y", () => {
     await user.keyboard("{Escape}");
 
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(document.body.style.overflow).toBe("");
+    // Scroll-lock attribute is removed by Radix when the dialog closes.
+    expect(document.body.hasAttribute("data-scroll-locked")).toBe(false);
   });
 
   it("focuses the first interactive control on open", async () => {
