@@ -74,82 +74,22 @@ all milestones below, "the test zip" refers to that fixture.
 
 ---
 
-#### M1 — Schema + DAG enumeration + reindex CLI (in progress)
+#### M1 — Schema + DAG enumeration + reindex CLI (shipped)
 
-**Scope:**
+Shipped 2026-05-07. Full delivery summary (per-sub-slice commits +
+verified smoke-test) lives in `docs/08-roadmap-shipped.md`. Brief: 22
+canonical stage IDs in `core.models.PAGE_STAGE_IDS`, normalised
+`page_stages` table with composite PK + CHECK constraints, full
+dual-write `commit_stage_artifact` + `reconcile_page` detector, the
+`GET /api/data/projects/{id}/pages/{idx0}/stages` route with
+concurrency-safe lazy-init, and `pgdp-prep reindex [--heal]`.
 
-- Add `page_stages` table + indexes to `SqliteDatabase`
-  (canonical spec §SQLite schema).
-- Add split-related columns to `pages` (`parent_page_id`,
+**Carried forward into a later slice:**
+
+- §E split-related columns on `pages` (`parent_page_id`,
   `source_crop_bbox`, `split_index`, `split_at_stage`, `split_suffix`,
-  `reading_order`).
-- Land `core/pipeline/stage_dag.py` with the **22-stage registry**
-  (matches spec STAGE_VERSIONS — pre-existing 4 ingest-fed stages, 12
-  decomposed from `process_page_cpu`'s 4c-4o, the `blank_proof_synth`
-  alt for blank pages, and 5 post-Step-4 stages including `text_review`),
-  dependency map, and `compute_dirty_descendants()` helper.
-- `GET /api/pages/{page_id}/stages` route + auto-initialisation of
-  `not-run` rows (lazy side of dual-write reconciliation).
-- `PageStageWriter.commit_stage_artifact` (write-tmp → fsync → atomic
-  rename → DB upsert in one transaction; fail-loudly per Q9) +
-  `PageStageWriter.reconcile_page` (drift report; no healing in this slice).
-- The `pgdp-prep reindex <project_id>` CLI (canonical spec
-  §Dual-write reconciliation) — read-only by default, `--heal` flag
-  for orphan deletion / failed-row marking.
-- No runner, no UI changes, no stage execution.
-
-**Status (2026-05-07):**
-
-- §A schema + CRUD shipped (commit `128ead9`).
-- §B 22-stage DAG + dirty-descendants helper shipped (commit `2341fa1`).
-- §C route + dual-write skeleton — pending.
-- §D reindex CLI — pending.
-- §E split-related columns on `pages` — pending (deferred to a later
-  slice; not load-bearing for §C/§D since no splits exist yet).
-- §F doc realign — this section.
-
-**Required test fixtures:** `tests/fixtures/three_page_book.py` (helper
-`build_three_page_book_zip` + `three_page_book_zip` conftest fixture) —
-shipped (commit `48b8ce9`).
-
-**How to verify by running the app (UI smoke-test):**
-
-1. `make run`. Open <http://127.0.0.1:8765>.
-2. Create a project named "M1-smoke", upload the test zip
-   (`uv run python -c "from tests.fixtures.three_page_book import
-   build_three_page_book_zip; from pathlib import Path;
-   build_three_page_book_zip(Path('/tmp/m1.zip'))"`).
-3. Wait for the existing ingest / thumbnails rows to turn green.
-4. Open a terminal:
-   `curl -s http://127.0.0.1:8765/api/pages/0000/stages | jq .` (route
-   pending §C). The response should be a JSON array with **22 entries**,
-   each an object with `stage_id`, `status: "not-run"`, `stage_version: 1`,
-   `artifact_key: null`. The stage IDs must match
-   `core.models.PAGE_STAGE_IDS` verbatim.
-5. `sqlite3 ~/pgdp-projects/state.db ".schema page_stages"` — should
-   show the composite-PK schema with the two indexes
-   (`page_stages_proj_status`, `page_stages_proj_page`) and CHECK
-   constraints on `status` + `stage_id`.
-6. `pgdp-prep reindex <project_id>` (pending §D) — should report
-   "0 orphan files, 0 missing artifacts, 0 hash mismatches" cleanly.
-7. Manually `rm -rf ~/pgdp-projects/<project>/pages/0000/` and re-run
-   `pgdp-prep reindex --heal <project_id>` — should mark every row for
-   that page `failed` and report the heal action.
-
-**Pass criterion:** the API exposes 22 not-run stages per page; the
-reindex CLI correctly reports drift; `page_stages` rows survive a
-restart.
-
-**Likely failure modes:**
-
-- "API returns 23 stages because someone added a duplicate ID without
-  deduping the registry" — surface during step 4.
-- "`reindex` reports the bare DB path for `pages/<page_id>` because the
-  page-id encoding for split children isn't implemented yet" — fine
-  for M1 since no splits exist; surface as a follow-up note.
-
-There is **no UI yet** at M1 — the API + CLI are the user-checkable
-signals.
+  `reading_order`) — not load-bearing for §C/§D since no splits exist
+  yet. Pick up before M2 starts running stages that produce splits.
 
 ---
 

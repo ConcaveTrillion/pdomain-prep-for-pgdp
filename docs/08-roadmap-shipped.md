@@ -11,6 +11,103 @@ not re-paste roadmap prose here.
 
 ---
 
+## §P0.5 M1 — Schema + DAG enumeration + reindex CLI (2026-05-07)
+
+Foundation milestone for the per-page stage DAG refactor (canonical
+spec `docs/specs/pipeline-task-model.md`). Lands the schema, the DAG
+table, the dual-write writer, the read-only API surface, and the
+reindex CLI — but no runner and no UI changes. M2 picks up the actual
+per-stage execution.
+
+**Sub-slices and commits:**
+
+- §A SQLite `page_stages` table + indexes + CRUD — commit `128ead9`.
+  Composite PK `(project_id, page_id, stage_id)`, indexes on
+  `(project_id, status)` and `(project_id, page_id)`, CHECK clauses
+  pinning status to the `PageStageStatus` enum and `stage_id` to the
+  22 canonical entries from `core.models.PAGE_STAGE_IDS`.
+  `delete_project` cascades. Five CRUD methods on `SqliteDatabase`.
+- §B 22-stage DAG enumeration + dirty-descendants helper —
+  commit `2341fa1`. `core/pipeline/stage_dag.py` with frozen `Stage`
+  rows, `STAGE_DAG` tuple, `topological_order()`, `get_stage()`, and
+  `compute_dirty_descendants()`. Two stages have multi-parent edges:
+  `crop_to_content` (parents: `invert`, `find_content_edges`) and
+  `ocr_crop` (parents: `canvas_map`, `blank_proof_synth`).
+- §C `GET /api/data/projects/{id}/pages/{idx0}/stages` route +
+  `commit_stage_artifact` + `reconcile_page` — commit `50105af`.
+  Lazy-init via `INSERT OR IGNORE` is concurrency-safe (parallel
+  first-touch converges to exactly 22 rows). Writer follows the
+  spec's dual-write contract (write tmp → fsync → atomic rename → DB
+  upsert) with full rollback on any failure (Q9 fail-loudly).
+  Single-file output extension mapping covers 14 simple stage outputs;
+  compound-output stages (`ocr`, `extract_illustrations`, `text_review`)
+  raise an explicit "use a sibling writer" error so M2 catches the
+  not-yet-implemented path early.
+- §D `pgdp-prep reindex [--heal]` CLI — commit `e7f391d`. Read-only
+  scan exits 0 clean, 2 on drift. `--heal` quarantines orphan files
+  to `<project>/.orphan-stage-artifacts/<relpath>` with a manifest,
+  marks DB rows for missing files `failed` (cascading downstream
+  `clean` rows to `dirty` via `compute_dirty_descendants`), and marks
+  hash-mismatch rows `dirty` while leaving the on-disk file untouched.
+  Subcommand dispatch lives in `__main__.py` without breaking bare
+  flag invocations.
+- §F doc realign — commit `86fb693` (16→22 stage-count drift fix
+  across roadmap + specs) and the doc-realign commit closing M1.
+
+**Note on route path:** the spec's `GET /api/pages/{page_id}/stages`
+shorthand was implemented as `GET /api/data/projects/{id}/pages/{idx0}/stages`
+because `page_id` alone is not unique across projects (only the
+`(project_id, idx0)` pair is). This matches the existing
+`/api/data/projects/{id}/pages/{idx0}` convention used by every other
+page-scoped route and keeps auth filtering uniform.
+
+**Carried forward to a later slice:**
+
+- §E split-related columns on `pages` (`parent_page_id`,
+  `source_crop_bbox`, `split_index`, `split_at_stage`, `split_suffix`,
+  `reading_order`) — not load-bearing for §C/§D since no splits exist
+  yet. Should land before M2 starts running stages that emit splits.
+
+**Verified smoke-test (2026-05-07).** Replicable end-to-end:
+
+1. `make run` → app comes up at `http://127.0.0.1:8765`.
+2. Seed a project named `M1-smoke` (the three-page fixture lives at
+   `tests/fixtures/three_page_book.py`:
+   `uv run python -c "from tests.fixtures.three_page_book import
+   build_three_page_book_zip; from pathlib import Path;
+   build_three_page_book_zip(Path('/tmp/m1.zip'))"`).
+3. `curl -s http://127.0.0.1:8765/api/data/projects/M1-smoke/pages/0/stages | jq 'length'`
+   returns `22`. The 22 stage IDs returned are, in topological order:
+   `ingest_source, thumbnail, auto_detect_attrs,
+   auto_detect_illustrations, decode_source, blank_proof_synth,
+   extract_illustrations, initial_crop, manual_deskew_pre, grayscale,
+   threshold, invert, find_content_edges, crop_to_content,
+   auto_deskew, morph_fill, rescale, canvas_map, ocr_crop, ocr,
+   text_postprocess, text_review`. Every row has
+   `status="not-run"`, `stage_version=1`, `artifact_key=null`.
+4. `sqlite3 ~/pgdp-projects/state.db ".schema page_stages"` shows the
+   composite-PK schema with indexes `page_stages_proj_status` and
+   `page_stages_proj_page` and CHECK constraints on status + stage_id.
+5. `pgdp-prep reindex` with no drift prints
+   `reindex: scanned N page(s); 0 orphan files, 0 missing artifacts,
+   0 hash mismatches` and exits 0.
+6. `rm -rf ~/pgdp-projects/projects/M1-smoke/pages/0000/stages/` →
+   `pgdp-prep reindex` exits 2 with one missing-artifacts entry; then
+   `pgdp-prep reindex --heal` exits 0 and prints
+   `reindex --heal: scanned 1 page(s); 0 orphan(s) quarantined,
+   N row(s) marked failed, ...`. Re-running `pgdp-prep reindex`
+   prints "0 orphan files, 0 missing artifacts, 0 hash mismatches"
+   and exits 0.
+
+**Caveat surfaced.** The M1 smoke-test exercises only the API + CLI
+surface — there is no UI yet. Creating a project from the test zip
+via the SPA requires the existing ingest/thumbnails jobs to finish
+first; for the API-level verification (steps 3–6) seeding the DB
+directly with a `Project` and a `PageRecord` is sufficient because
+the M1 surface doesn't depend on ingest having actually run.
+
+---
+
 ## §13a step 1 — Radix Dialog adoption (ProjectListPage modal)
 
 First shadcn/ui adoption slice. Adds `@radix-ui/react-dialog` and a thin
