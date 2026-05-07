@@ -36,6 +36,7 @@ output directories unless the user explicitly clicks "Commit to project".
 The workbench is a route: `/project/{id}/page/{idx0}`
 
 It is entered from:
+
 - Any thumbnail in the `PageTaggerGrid` (click thumbnail)
 - Any page card in `InspectView` (click thumbnail)
 - Navigation arrows in `TextReviewView`
@@ -79,6 +80,7 @@ class PageSplit(BaseModel):
 
 **Reading order and suffixes** — the user assigns `reading_order` by dragging
 splits in the reading-order list. The `suffix` can be:
+
 - Auto-generated: `"a"`, `"b"`, `"c"`, … based on reading_order index
 - Manually overridden for legacy notebook compatibility: `"cl"`, `"cr"`, `"ch"`
 
@@ -158,6 +160,7 @@ image dimensions exactly. Overlay is rebuilt and pushed via `ii.content = new_sv
 on every state change. This is non-flickering (no image reload).
 
 SVG elements rendered:
+
 - **Split regions**: semi-transparent coloured rectangles with suffix label
 - **Selected split**: heavier border + resize handles (corner circles)
 - **Drawing preview**: dashed outline updated on every `mousemove`
@@ -307,6 +310,7 @@ def rescale_splits(splits, old_hw, new_hw):
 ### Reading Order List
 
 A drag-reorder list of all splits for the current page. Each row shows:
+
 - Drag handle (⠿)
 - Colour swatch matching the canvas overlay
 - Suffix label (editable inline)
@@ -330,6 +334,7 @@ and the coordinate fields in the detail panel update.
 ### Auto-detect Columns Button
 
 Runs a column-detection heuristic on the processed image:
+
 1. Sum pixel values along the horizontal axis → column density profile
 2. Find sustained vertical "gaps" (columns of low pixel density) that run ≥60%
    of the image height → these are column gutters
@@ -424,6 +429,7 @@ dialog.
 Committed changes persist across navigation.
 
 **Jump to page** field in the header accepts:
+
 - A 0-based index: `49`
 - A page prefix: `p045`
 - A source filename stem: `fourmenfarrago00belluoft_0050`

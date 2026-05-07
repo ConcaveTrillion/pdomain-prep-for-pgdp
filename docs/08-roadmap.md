@@ -508,6 +508,7 @@ clustering, unknown id, empty list, delete-all-empty-text, plus four
 `get_page_text` unchanged.
 
 Open questions still open and deferred:
+
 - v1 chose **hard rewrite** for simplicity. A future soft-delete
   pass (e.g. `OcrWord.deleted: bool`) is non-breaking — the response
   still returns `remaining_words` so the client doesn't need to know
@@ -554,6 +555,7 @@ Existing 4 TextReviewPage tests + 4 WordBboxOverlay tests stayed
 green; total frontend tests now 45 (was 43).
 
 Open question still open and deferred:
+
 - **Undo: skipped for v1.** The server endpoint is destructive
   (hard rewrite of `<root>.words.json` + `<root>.txt`) and there's
   no restore route, so honest single-level undo would require
@@ -609,6 +611,7 @@ green; total frontend tests now **59** (was 45, +14).
 `make frontend-test` runs in ~1.6s; `npx tsc -b` exits clean.
 
 Open question still open and deferred:
+
 - **Undo / soft-delete:** still pending the user's schema decision
   (`OcrWord.deleted: bool` vs hard rewrite). Tick 22 and tick 23 both
   flagged this; not appropriate to make unilaterally overnight.
@@ -635,6 +638,7 @@ green. Total frontend tests now **61** (was 59, +2).
 backend changes; no wire-contract changes.
 
 Tick 25 candidates (pick the smallest with the highest leverage):
+
 - **Soft-delete server flag** so undo becomes feasible: add
   `deleted: bool` to `OcrWord`, change the DELETE endpoint to flip
   the flag instead of dropping rows, return `remaining_words`
@@ -850,7 +854,7 @@ CI side (tick 15) — `.github/workflows/release.yml`:
 
 Local side (tick 17) — Hatchling build hook:
 
-3. `build_hooks/spa_check.py` is wired via
+1. `build_hooks/spa_check.py` is wired via
    `[tool.hatch.build.targets.wheel.hooks.custom]` in `pyproject.toml`.
    The hook runs at the start of any wheel build (`uv build`,
    `hatch build`, `pip wheel .`, etc.) and raises a `RuntimeError`

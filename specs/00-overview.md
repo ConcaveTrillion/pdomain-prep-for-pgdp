@@ -32,7 +32,7 @@ Three shapes, one codebase. Spec 09 has the full breakdown.
 | | Local | Self-hosted | Managed |
 |---|---|---|---|
 | Target user | Solo proofer | Small team | Hosted offering |
-| Install | `curl … install.sh | sh` (uv tool install from GitHub tag) | systemd unit on a VM | ECS Fargate task |
+| Install | `curl … install.sh \| sh` (uv tool install from GitHub tag) | systemd unit on a VM | ECS Fargate task |
 | Storage | Filesystem | Filesystem or S3 | S3 |
 | Database | SQLite | SQLite or Postgres | Postgres / Aurora |
 | GPU | Local CUDA / MPS / CPU | Local CUDA / Modal | Modal / shared GPU container |

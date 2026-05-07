@@ -22,3 +22,20 @@ repos:
         args: [--fix]
     # Run the formatter.
     -   id: ruff-format
+-   repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: v0.22.1
+    hooks:
+    -   id: markdownlint-cli2
+    -   id: markdownlint-cli2
+        alias: markdownlint-cli2-fix
+        args: [--fix]
+        stages: [manual]
+-   repo: local
+    hooks:
+    -   id: frontend-tsc
+        name: frontend tsc -b --noEmit
+        description: TypeScript project-references type-check for the React SPA.
+        entry: bash -c 'cd frontend && npx tsc -b --noEmit'
+        language: system
+        files: ^frontend/(src/.*\.(ts|tsx)|tsconfig.*\.json|package(-lock)?\.json|vite\.config\.ts)$
+        pass_filenames: false

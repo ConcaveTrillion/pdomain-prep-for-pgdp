@@ -83,6 +83,7 @@ make frontend-build && uv run pgdp-prep
 ## Sibling repos
 
 In `/workspaces/ocr-container/` (when present):
+
 - `pd-book-tools/` — shared OCR/geometry/image-processing primitives.
 - `pd-ocr-cli/` — the install.sh + uv-tool pattern this repo mirrors.
 - `pd-ocr-labeler/` — separate labeler UI (DocTR labels).

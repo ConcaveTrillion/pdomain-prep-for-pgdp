@@ -406,6 +406,7 @@ confirms or overrides per page.
 The tagger is the primary editor for page-typed fields. Full layout in spec 03.
 
 **Grid view:** thumbnails of all source pages.
+
 - Page prefix label
 - Tag badges: BLANK / PLATE-B / PLATE-P / PLATE-R / TOP / CENTER / BOTTOM
 - Override indicator (orange dot) if any `config_overrides` field is set
@@ -413,11 +414,13 @@ The tagger is the primary editor for page-typed fields. Full layout in spec 03.
 - Click → open per-page detail panel (or PageWorkbench for full editing)
 
 **Bulk actions toolbar:**
+
 - Set range: proof start/end, frontmatter/bodymatter boundaries
 - Auto-detect blanks / plates buttons (writes suggestions into `page_type`)
 - Selected pages: assign `page_type` or `alignment` in bulk
 
 **Per-page detail panel (right drawer):**
+
 - Thumbnail preview
 - Inputs for every `PageConfigOverrides` field, each with an "inherit / override" toggle
 - "Open in Workbench" button for full live-preview editing (spec 06)

@@ -60,6 +60,7 @@ docs are about **the actual code** and may diverge from the spec when an
 intentional decision was made; those divergences are called out explicitly.
 
 For a new contributor (or AI assistant), the recommended reading order:
+
 1. [`../CLAUDE.md`](../CLAUDE.md) — quick start
 2. [`01-overview.md`](01-overview.md) — high-level shape
 3. [`08-roadmap.md`](08-roadmap.md) — what to work on next

@@ -55,6 +55,7 @@ files are readable, write initial `PageRecord` per source page.
 **Input:** `project.source_uri` (folder, zip path, or S3 prefix)
 
 **Output:**
+
 - `source/` populated with extracted images
 - `processing/original_thumbnail/` populated (Step 1 can run after)
 - One `PageRecord` per source page written via storage adapter
@@ -155,6 +156,7 @@ PGDP-standard proofing image for each page.
 **Input:** `processing/original_as_jpg/<stem>.jpg` (or original source)
 
 **Output:**
+
 - `processing/proofing_images_png/<stem>_<prefix>.png` — final proofing image
 - `processing/pre_ocr_images_png/<stem>_<prefix>.png` — same image (Step 6 crops this)
 - `processing/debug_png/<stem>_<prefix>_*.png` — debug intermediates (if `debug=True`)

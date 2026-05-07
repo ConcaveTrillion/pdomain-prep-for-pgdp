@@ -20,6 +20,7 @@ the framing is still notebook-shaped:
    shouldn't be book-level at all.
 
 Three changes fix this:
+
 1. **Three-tier config** (system defaults → project config → per-page overrides)
 2. **Single Python FastAPI process** (drop Hono)
 3. **Three deployment shapes** (local / self-hosted / managed) instead of four

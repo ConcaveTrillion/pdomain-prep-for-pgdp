@@ -232,6 +232,6 @@ this audience.
   on this.
 - Not a commitment to Modal, R2, Cloud Run, or any specific vendor —
   but the *shape* (free-tier coordinator + free-egress object store
-  + cron-drained scheduled GPU + laptop-resident CPU work) is the
+  - cron-drained scheduled GPU + laptop-resident CPU work) is the
   load-bearing part. Vendor swaps are fine as long as the shape and
   the budget hold.

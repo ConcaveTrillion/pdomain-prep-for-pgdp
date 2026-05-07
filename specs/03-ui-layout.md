@@ -76,7 +76,8 @@ Progress = steps complete / total steps (weighted by step complexity).
 
 Two-step wizard rendered as a `<Dialog>` over the project list.
 
-**Step 1 — Book details + source**
+### Step 1 — Book details + source
+
 ```
 Book name  ___________________________
 
@@ -90,7 +91,10 @@ Projects S3 prefix   s3://my-bucket/projects/
               [Cancel]   [Create →]
 ```
 
-**Step 2 — Ingest progress** (auto-starts; job polling via TanStack Query)
+### Step 2 — Ingest progress
+
+(auto-starts; job polling via TanStack Query)
+
 ```
 Extracting source images        ████████████░░  85%
 Generating thumbnails           ████░░░░░░░░░░  32%
@@ -149,6 +153,7 @@ edge finding) are all on the page tagger and PageWorkbench, not here.
 Each cell is a `<button>` wrapping a thumbnail `<img>` and badge strip.
 
 **Cell states** (visual border colour):
+
 - Default (grey border): no overrides
 - Blank (white / dashed): `page.page_type === "blank"`
 - Plate (blue): `page.page_type` is `plate_b`/`plate_p`/`plate_r`

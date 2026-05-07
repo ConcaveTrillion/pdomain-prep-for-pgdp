@@ -20,6 +20,7 @@ checkout is required for local-dev workflows that edit both repos at once.
 ## What needs Node, what doesn't
 
 **Doesn't need Node:**
+
 - `make setup` (uv sync + pre-commit hooks)
 - `make test` (pytest only — 128 tests, ~12 s)
 - `make install-local` (editable wheel install)
@@ -27,6 +28,7 @@ checkout is required for local-dev workflows that edit both repos at once.
 - Iterating on FastAPI routes / pipeline / models / adapters
 
 **Needs Node:**
+
 - `make frontend-build` — Vite build, copies SPA into `src/.../static/`.
 - `make frontend-dev` — Vite dev server on `:5173`.
 - `make build` — depends on `frontend-build` so the wheel ships with the SPA.

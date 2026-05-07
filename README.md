@@ -22,6 +22,7 @@ pgdp-prep
 ```
 
 The installer:
+
 - installs `uv` if missing,
 - detects an NVIDIA GPU via `nvidia-smi` and picks the matching PyTorch wheel,
 - resolves the latest GitHub tag, downloads the prebuilt wheel attached to
