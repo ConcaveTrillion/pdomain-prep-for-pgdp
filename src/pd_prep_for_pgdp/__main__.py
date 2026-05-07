@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import errno
+import os
 import socket
 import sys
 import webbrowser
@@ -145,6 +146,21 @@ def _pick_port(
     return chosen
 
 
+def _export_bound_env(host: str, port: int) -> None:
+    """Export the bound host/port to the process environment.
+
+    `Settings` reads `PGDP_HOST` / `PGDP_PORT`, so writing them here
+    before `uvicorn.run` ensures the FastAPI app sees the actual bound
+    values rather than the configured defaults. This is what powers
+    `GET /api/server-info` (§L1 step 3).
+
+    Idempotent and overwrites — by design. The kernel-assigned port
+    must win over any stale `PGDP_PORT` in the parent shell.
+    """
+    os.environ["PGDP_HOST"] = host
+    os.environ["PGDP_PORT"] = str(port)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
 
@@ -176,6 +192,12 @@ def main(argv: list[str] | None = None) -> int:
             config_dir=settings.config_dir,
         )
     )
+
+    # Export the bound host/port to the process env so the child workers
+    # (and the FastAPI app via `Settings`) see the actual bound values
+    # instead of the configured defaults. `GET /api/server-info` reads
+    # these — see §L1 step 3.
+    _export_bound_env(host, port)
 
     url = f"http://{host}:{port}"
     print(f"Listening on {url}")

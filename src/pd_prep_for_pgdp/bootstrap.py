@@ -247,6 +247,13 @@ def build_app(settings: Settings | None = None) -> FastAPI:
 
     install_healthz(app)
 
+    # /api/server-info is local-mode UX (§L1 step 3) but harmless on
+    # self-hosted / managed shapes — leave it on for parity. Mount before
+    # the SPA fallback so the route wins over the catch-all.
+    from .api.server_info import install_server_info
+
+    install_server_info(app)
+
     if settings.mode != "gpu_worker_only":
         from .api.env_js import install_env_js
 
