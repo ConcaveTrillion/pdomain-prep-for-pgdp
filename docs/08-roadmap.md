@@ -33,18 +33,30 @@ account for an end-to-end test.
 **Acceptance:** `modal deploy adapters/gpu/modal_app.py` then a real
 `process-page` request through `ModalBackend` writes a PNG to S3.
 
-### 2. Postgres adapter
+### 2. Postgres adapter — live-DB integration tests
 
-**File:** `src/pd_prep_for_pgdp/adapters/database/postgres.py` (doesn't
-exist yet).
+**File:** `src/pd_prep_for_pgdp/adapters/database/postgres.py` — scaffold
+shipped (mirrors `SqliteDatabase` exactly: JSON/JSONB-per-record, `pages`
+keyed on `(project_id, idx0)`, `jobs` indexed on
+`(owner_id, created_at DESC)`). Uses raw async psycopg, not SQLAlchemy —
+the document-store shape doesn't need an ORM.
 
-Mirror the SQLite shape: every Pydantic model lives in a JSON column;
-`pages` is keyed on `(project_id, idx0)`; `jobs` indexed on
-`(owner_id, created_at DESC)`. Use SQLAlchemy + psycopg.
+`tests/test_postgres_adapter.py` covers URL validation, the
+`put_pages([])` no-op contract, and the bootstrap-friendly error when
+the `[postgres]` extra is absent. All class-direct tests `importorskip`
+psycopg cleanly.
 
-**TDD plan:** add a `db` fixture factory that yields either `SqliteDatabase`
-or `PostgresDatabase` (skipping postgres when unavailable), then parametrise
-the existing `test_assign_prefixes.py`, `test_job_runner.py`, etc. over both.
+**Still open (next slice):**
+
+1. Wire a Postgres service into the dev container (or a CI service) so
+   the existing direct-class tests stop skipping.
+2. Add a parametrised `db` fixture factory yielding `SqliteDatabase`
+   **or** `PostgresDatabase` (skip-postgres when the service is
+   unavailable), then run the existing `test_assign_prefixes.py`,
+   `test_job_runner.py`, `test_project_archive.py`, etc. over both.
+3. Decide bootstrap default: empty `database_url` currently falls back
+   to SQLite. Managed-mode container should require an explicit
+   `postgres://` URL — surface a clearer error when neither is set.
 
 ### 3. install.sh end-to-end exercise
 
