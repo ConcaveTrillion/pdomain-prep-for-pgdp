@@ -186,7 +186,91 @@ every stage would depend on everything that touches `ProjectConfig`.
 
 ---
 
+## Memory-resident execution model
+
+> Added 2026-05-07 per user directive. The per-page stage DAG operates
+> on **in-memory image objects** during a page-processing run, not
+> through disk between every stage. Disk I/O is reserved for
+> persistence checkpoints and reruns; it is not on the per-stage
+> critical path.
+
+### In-memory by default during a run
+
+When stages 1..N execute as part of a single page-processing pass
+(e.g. `page.run_dirty(idx0)`, `page.run_from(idx0, stage_id)`, or a
+project-level fan-out's per-page worker), the output of stage K is
+held in RAM and passed directly to its DAG-downstream dependents. The
+DAG executor maintains a **refcount / last-consumer** scheme keyed by
+artifact name: each in-memory artifact's refcount equals the number of
+stages in this run that still have it as an unconsumed input. The
+artifact may be released only when refcount falls to zero **and** any
+deferred persistence (below) has been queued.
+
+### Deferred disk writes
+
+When a stage's output is destined for persistence — i.e. the stage is
+in the checkpoint set (Q3) or `PGDP_FULL_STAGE_ARTIFACTS=1` is set —
+the write does not block the DAG. The serialized artifact is submitted
+to a background thread / executor and the DAG immediately advances to
+the next stage on the in-memory copy.
+
+Failures in deferred writes are captured by the executor and surfaced
+as a stage-error after the in-memory run completes; they do not block
+compute and they do not roll back the page's in-memory state. See Q9
+below for status-mapping policy.
+
+### Drop-on-last-consumer
+
+Once an in-memory artifact has been consumed by all of its DAG-
+downstream dependents in this run **and** its persistence (if any) has
+been queued, the runner drops its reference so the GC can reclaim the
+buffer. For a long page-process pass this keeps peak RAM bounded by
+the working-set size of the DAG (typically 2–3 active artifacts), not
+the cumulative size of the full chain.
+
+### Lazy load on partial / single-stage reruns
+
+When a user invokes "rerun stage K on page Y" from the workbench:
+
+1. Only stage K's input artifacts are loaded from disk — from the
+   nearest persisted upstream checkpoint. Earlier stages are not
+   re-executed.
+2. Stage K runs against those in-memory inputs.
+3. Dirty propagation still flags downstream stages (per §Dirty
+   propagation), but those reruns — when triggered — also follow the
+   memory-resident pattern starting from K's output. They do not
+   round-trip through disk between K and K+1.
+
+This means a "rerun K then run dirty" sequence on a single page pulls
+checkpoint(K-1) once, then runs K..N entirely in RAM, persisting only
+the checkpoint stages off the critical path.
+
+### Workbench artifact viewer
+
+The artifact viewer (per §Workbench UX) reads from disk — from the
+persisted checkpoint or, with `PGDP_FULL_STAGE_ARTIFACTS=1`, the full
+artifact set. It does **not** trigger or require an in-memory DAG
+run; it is a read-after-the-fact view. This decouples "interactive
+inspect" from "compute pipeline" so that opening a page in the
+workbench costs only object-storage reads.
+
+### Edge cases (open — see Q8/Q9/Q10 below)
+
+The exact bounded-queue size for deferred writes, the failure-mode
+status mapping, and the canonical in-memory artifact representation
+are deferred to Q8/Q9/Q10 and require explicit user lock before M2
+runner work.
+
+---
+
 ## Persistence model
+
+> The on-disk schema below describes the **final-rest state** of a
+> page's artifacts after a run has completed and any deferred writes
+> have flushed. It is **not** the per-stage critical-path state — the
+> latter lives only in memory during the run, per §Memory-resident
+> execution model. A stage's row in `page_stages` does not appear with
+> an `artifact_key` until the deferred write has committed.
 
 ### Filesystem layout (under `~/pgdp-projects/<id>/`, via `IStorage`)
 
@@ -269,6 +353,14 @@ state in two places.
 ---
 
 ## Dirty propagation
+
+> Dirty propagation operates on **persisted checkpoint state** —
+> i.e. against rows in `page_stages` whose `artifact_key` is committed.
+> In-memory mid-run artifacts (per §Memory-resident execution model)
+> do **not** appear in `page_stages` until their persistence write has
+> succeeded; until then the row's status remains `running`. This
+> guarantees that "is page P complete?" reads from a coherent
+> persisted view and never observes a half-written run.
 
 When stage `S` on page `P` re-runs (or its config / input fingerprint
 changes), all stages reachable from `S` in the DAG on page `P` get
@@ -608,6 +700,84 @@ single "is the page reviewed?" gate for `build_package`, but conflates
 when project config has `require_text_review=True` (default off in M2,
 flip to on once review UX exists). This gives the workbench one
 uniform completion view.
+
+---
+
+## Open questions — NEW (not yet locked, added 2026-05-07)
+
+The following questions arose with the §Memory-resident execution
+model amendment and **must be explicitly locked by the user before
+M2 runner work**. Recommendations are written below for each, but
+per the project's "no implicit approval" rule, they are not in force
+until the user says so.
+
+### Q8. Concurrency cap on in-flight deferred-write tasks
+
+When a page-processing run produces multiple checkpoint outputs in
+quick succession, how do we bound the deferred-write executor?
+
++ **Bounded executor + bounded queue** (recommended): a per-process
+  `ThreadPoolExecutor` with a small worker count (e.g. 2–4) and a
+  bounded submission queue. When the queue is full, the DAG runner
+  blocks on submission — back-pressure prevents unbounded RAM growth
+  if disk is slow. Cap is configurable; default sized so a typical
+  fast SSD never blocks but a slow networked storage in self-hosted
+  shapes degrades gracefully.
++ **Unbounded fire-and-forget**: simpler, but a slow `IStorage` (e.g.
+  S3 with backpressure, or a full disk) can grow the in-flight set
+  unboundedly and OOM the worker.
+
+**Recommendation:** bounded executor with bounded queue.
+
+### Q9. Behaviour when a deferred write fails mid-run
+
+If the in-memory compute succeeded but a deferred persistence write
+fails (e.g. disk full, S3 PUT 5xx after retries), what status does
+the page's run land in?
+
++ **Per-artifact policy** (recommended):
+  + If the failed write is a **checkpoint stage** artifact —
+    something the workbench / `build_package` may legitimately need
+    to read later — the page transitions to `failed` for that stage
+    (and downstream stages stay `not-run` from this run's
+    perspective; their in-memory outputs are discarded since their
+    correctness is moot if the upstream persistence didn't land).
+  + If the failed write is a **non-checkpoint** artifact under
+    `PGDP_FULL_STAGE_ARTIFACTS=1` (debug-only persistence), the
+    stage status is `clean-with-write-warning` and the run as a
+    whole completes; the workbench shows a banner. Compute is the
+    canonical truth; the missing debug artifact is regenerable.
++ **Always-fail**: any write failure fails the page. Simple but
+  noisy in debug mode.
++ **Always-warn**: any write failure is downgraded to a warning.
+  Risk: a page reads `clean` even though its checkpoint isn't on
+  disk, breaking the next stage's lazy load.
+
+**Recommendation:** the per-artifact policy above —
+`failed` for checkpoint writes, `clean-with-write-warning` for
+non-checkpoint debug writes.
+
+### Q10. Format of in-memory artifacts
+
+What is the canonical exchange type between stages while running in
+memory?
+
++ **Numpy ndarray as canonical** (recommended): every stage's input
+  and output is a `numpy.ndarray` (BGR for color images, single-
+  channel for grayscale/binary). Optional accompanying lightweight
+  metadata struct (a small dataclass — dtype, channel order,
+  origin-bbox, resampling provenance — to avoid per-stage cv2 vs
+  PIL conversion churn).
++ **Per-stage native type**: each stage uses whatever its underlying
+  library prefers (PIL for some, numpy for others, cv2 Mat for
+  others). Less conversion in some hot paths but introduces
+  N×M conversion combinations across stage boundaries and makes the
+  refcount / drop logic harder to write generically.
+
+**Recommendation:** numpy ndarray as the canonical exchange type
+plus a small optional cv2-style metadata struct, with adapters at
+the entry/exit of any stage that internally prefers PIL or torch
+tensors.
 
 ---
 

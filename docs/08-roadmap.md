@@ -55,6 +55,19 @@ Locked (2026-05-07)" for the full table; in summary:
 + Q7 → `text_review` modelled as a gate stage; `build_package` gates on
   `require_text_review` (default off in M2).
 
+**Memory-resident execution model added 2026-05-07.** The per-page
+stage DAG operates on in-memory image objects during a run; disk
+I/O is reserved for checkpoint persistence (off the critical path
+via a bounded deferred-write executor) and partial-rerun lazy loads.
+This impacts **M2 runner design** (must include a refcount-driven
+in-memory cache + bounded deferred-write executor) and **M3 workbench**
+(remains purely a disk read — does not require a live in-memory
+DAG run). New questions Q8 (deferred-write concurrency cap), Q9
+(failure-mode status mapping), and Q10 (canonical in-memory
+artifact format) are open in the spec and must be locked before
+M2 runner work begins. M1 (schema + DAG enumeration) remains
+unblocked because it touches neither the runner nor the workbench.
+
 M1 is unblocked.
 
 **Milestones:**

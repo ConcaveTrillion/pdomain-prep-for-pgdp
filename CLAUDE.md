@@ -80,6 +80,10 @@ uv run pgdp-prep --reload --frontend-dev http://localhost:5173   # other termina
   `core/pipeline/process_page.py`'s monolithic body, and do not add
   new `JobType.batch_*` values. Open questions Q1–Q7 are **locked
   (2026-05-07)** per the spec's "Open questions — Locked" table.
+  A §"Memory-resident execution model" amendment landed 2026-05-07
+  (in-memory DAG + bounded deferred-write executor + lazy-load on
+  partial rerun) and adds **Q8/Q9/Q10 as not-yet-locked** — those
+  must be explicitly decided before M2 runner work.
 - **Local-first priority (2026-05-07):** active work targets the local
   solo / self-hosted-team flow (SQLite + filesystem + CPU). Cloud /
   remote-mode prerequisites (Postgres adapter live tests, Modal-side
