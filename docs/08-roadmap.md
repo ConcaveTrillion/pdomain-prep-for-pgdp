@@ -59,6 +59,15 @@ adapters: harmless, can stay enabled.
 **Cross-link:** sibling repo `pd-ocr-labeler-spa` has the matching
 roadmap item for symmetry. Same design should apply to both apps.
 
+### L2. `make run` canonical local entry point
+
+**Shipped 2026-05-07.** Was: developers had to remember to run
+`make frontend-build` before `uv run pgdp-prep` or the SPA served a
+blank page. Now `make run` does both in one shot (frontend bundle then
+launch on `:8765`); `make run-cpu` forces `PGDP_GPU_BACKEND=cpu` for
+debugging / weak-GPU / CUDA-OOM paths. README + CLAUDE.md updated to
+point at `make run` as the canonical local-mode entry point.
+
 ---
 
 ## P1 — UX completeness
@@ -125,12 +134,18 @@ next slice that touches its surface):
 
 ## P3 — Pipeline depth
 
-### 14. CUDA path (LocalBackend)
+### 14. CUDA path (LocalBackend) — primitives only
 
-Spec 04 GPU path. Mirror `process_page_cpu` using
+**Status (2026-05-07):** `LocalBackend` is no longer a NotImplementedError
+stub — it now subclasses `CpuBackend`, which means the CPU pipeline runs
+on a CUDA host with DocTR/PyTorch automatically picking up `cuda:0`. So
+end users with a GPU get GPU-accelerated OCR today via the same code
+path as CPU users. What's still open is the Step 4 image-processing
+fast-path: replace cv2/numpy with
 `pd_book_tools.image_processing.cupy_processing` primitives + nvImageCodec
-for source decode. The orchestration shape is identical; the primitives
-differ. Behind a `[cuda]` extra so the wheel install stays slim.
+for source decode. Orchestration shape is identical; only the inner
+primitives change. Behind a `[cuda]` extra so the wheel install stays
+slim.
 
 ### 15. Shared GPU container backend
 
