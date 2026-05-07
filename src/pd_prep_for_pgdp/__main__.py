@@ -161,8 +161,41 @@ def _export_bound_env(host: str, port: int) -> None:
     os.environ["PGDP_PORT"] = str(port)
 
 
+_SUBCOMMANDS: dict[str, str] = {
+    # subcommand name -> dotted module path; module must expose `main(argv)`.
+    "reindex": "pd_prep_for_pgdp.cli.reindex",
+}
+
+
+def _dispatch_subcommand(argv: list[str]) -> int | None:
+    """If ``argv[0]`` is a known subcommand, run it and return its exit code.
+
+    Returns ``None`` if no subcommand matched, in which case the caller
+    falls through to the default "start the server" behaviour.
+    """
+    if not argv or argv[0].startswith("-"):
+        return None
+    name = argv[0]
+    module_path = _SUBCOMMANDS.get(name)
+    if module_path is None:
+        return None
+    import importlib
+
+    mod = importlib.import_module(module_path)
+    return mod.main(argv[1:])  # type: ignore[no-any-return]
+
+
 def main(argv: list[str] | None = None) -> int:
-    args = _parse_args(sys.argv[1:] if argv is None else argv)
+    raw_argv = sys.argv[1:] if argv is None else argv
+
+    # Subcommand dispatch wins over flag parsing — `pgdp-prep reindex --heal`
+    # must hand the rest of argv to the subcommand, not parse `--heal` as a
+    # server flag.
+    sub_rc = _dispatch_subcommand(raw_argv)
+    if sub_rc is not None:
+        return sub_rc
+
+    args = _parse_args(raw_argv)
 
     if args.version:
         from . import __version__
