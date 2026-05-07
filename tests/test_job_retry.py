@@ -116,3 +116,77 @@ def test_retry_unknown_job_404(tmp_path) -> None:
     with TestClient(app) as client:
         r = client.post("/api/gpu/jobs/no-such-job/retry")
         assert r.status_code == 404
+
+
+# Roadmap P3 #16 — payload_override on retry.
+#
+# Default retry copies payload verbatim. payload_override is a shallow
+# merge: keys in the override replace keys in the original; keys not present
+# in the override are preserved from the original. The original job is never
+# mutated (the audit trail stays intact).
+
+
+def test_retry_with_payload_override_replaces_existing_key(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    old_id = _seed_project_and_job(settings, JobStatus.error)
+    app = build_app(settings)
+    with TestClient(app) as client:
+        r = client.post(
+            f"/api/gpu/jobs/{old_id}/retry",
+            json={"payload_override": {"page_idxs": [5, 7]}},
+        )
+        assert r.status_code == 202, r.text
+        new_id = r.json()["job_id"]
+        new_job = client.get(f"/api/data/jobs/{new_id}").json()
+        # Override replaced the page_idxs list.
+        assert new_job["payload"]["page_idxs"] == [5, 7]
+        # estimated_pages reflects the override too.
+        assert r.json()["estimated_pages"] == 2
+
+        # Original job's payload is unchanged (audit trail).
+        old_job = client.get(f"/api/data/jobs/{old_id}").json()
+        assert old_job["payload"] == {"page_idxs": [0, 1]}
+
+
+def test_retry_with_payload_override_adds_new_key_preserves_others(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    old_id = _seed_project_and_job(settings, JobStatus.error)
+    app = build_app(settings)
+    with TestClient(app) as client:
+        r = client.post(
+            f"/api/gpu/jobs/{old_id}/retry",
+            json={"payload_override": {"confidence_threshold": 0.4}},
+        )
+        assert r.status_code == 202, r.text
+        new_id = r.json()["job_id"]
+        new_job = client.get(f"/api/data/jobs/{new_id}").json()
+        # New key added.
+        assert new_job["payload"]["confidence_threshold"] == 0.4
+        # Original page_idxs preserved (shallow merge — keys not in override survive).
+        assert new_job["payload"]["page_idxs"] == [0, 1]
+
+
+def test_retry_with_empty_payload_override_is_noop(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    old_id = _seed_project_and_job(settings, JobStatus.error)
+    app = build_app(settings)
+    with TestClient(app) as client:
+        r = client.post(f"/api/gpu/jobs/{old_id}/retry", json={"payload_override": {}})
+        assert r.status_code == 202, r.text
+        new_id = r.json()["job_id"]
+        new_job = client.get(f"/api/data/jobs/{new_id}").json()
+        # Empty override == no override; payload identical to original.
+        assert new_job["payload"] == {"page_idxs": [0, 1]}
+
+
+def test_retry_with_null_payload_override_uses_original(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    old_id = _seed_project_and_job(settings, JobStatus.error)
+    app = build_app(settings)
+    with TestClient(app) as client:
+        # Explicit null is the same as omitting the body entirely.
+        r = client.post(f"/api/gpu/jobs/{old_id}/retry", json={"payload_override": None})
+        assert r.status_code == 202, r.text
+        new_id = r.json()["job_id"]
+        new_job = client.get(f"/api/data/jobs/{new_id}").json()
+        assert new_job["payload"] == {"page_idxs": [0, 1]}

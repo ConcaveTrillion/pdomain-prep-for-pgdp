@@ -14,7 +14,7 @@ from ...adapters.database import IDatabase
 from ...core.job_events import JobEventBroker
 from ...core.models import Job, JobStatus, JobType
 from ..dependencies import get_database, get_job_events, get_user
-from .schemas import BatchJobRequest, BatchJobResponse
+from .schemas import BatchJobRequest, BatchJobResponse, RetryJobRequest
 
 router = APIRouter(tags=["gpu"])
 
@@ -88,13 +88,18 @@ async def cancel_job(
 @router.post("/jobs/{job_id}/retry", response_model=BatchJobResponse, status_code=202)
 async def retry_job(
     job_id: str,
+    body: RetryJobRequest | None = None,
     user: UserContext = Depends(get_user),
     db: IDatabase = Depends(get_database),
 ) -> BatchJobResponse:
     """Create a fresh copy of a failed/cancelled job in `queued` status.
 
-    Same project_id, type, and payload — fresh id and timestamps. The
-    original job stays in the database so the user can compare.
+    Same project_id and type — fresh id and timestamps. The original job
+    stays in the database so the user can compare. The new job's payload
+    starts as a copy of the original's; if `body.payload_override` is
+    provided (P3 #16), its keys are shallow-merged over the original
+    payload (override keys replace, others are preserved). Pass `None` /
+    omit the body to retry verbatim.
     """
     job = await db.get_job(job_id)
     if job is None or job.owner_id != user.user_id:
@@ -109,6 +114,12 @@ async def retry_job(
     dispatch_mode = "scheduled" if interval > 0 else "immediate"
     next_dispatch = datetime.now(UTC) + timedelta(seconds=interval) if interval > 0 else None
 
+    # Shallow-merge `payload_override` over a copy of the original payload.
+    # `dict(job.payload)` keeps the original job's row immutable.
+    new_payload = dict(job.payload)
+    if body is not None and body.payload_override:
+        new_payload.update(body.payload_override)
+
     new_job = Job(
         id=uuid.uuid4().hex,
         project_id=job.project_id,
@@ -116,7 +127,7 @@ async def retry_job(
         type=job.type,
         status=JobStatus.scheduled if interval > 0 else JobStatus.queued,
         next_dispatch_at=next_dispatch,
-        payload=dict(job.payload),
+        payload=new_payload,
     )
     await db.put_job(new_job)
     page_idxs = new_job.payload.get("page_idxs") or []
