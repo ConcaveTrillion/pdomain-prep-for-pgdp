@@ -1,7 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
-import type { SystemDefaults } from "../api/types";
+import type { components } from "../api/types.gen";
+
+// GET returns the *Output* schema (server populates every field, so they're
+// all required). PUT/POST accept the *Input* schema where defaults remain
+// optional. The page reads then echoes back, so the Output shape (a strict
+// subtype of Input on the wire) is what we model in state.
+type SystemDefaults = components["schemas"]["SystemDefaults-Output"];
 
 const OCR_ENGINES = ["doctr", "tesseract"] as const;
 const LAYOUT_DETECTORS = ["none", "contour", "pp-doclayout-plus-l"] as const;
