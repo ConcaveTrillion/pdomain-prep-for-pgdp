@@ -30,21 +30,56 @@ crashing.
 
 **Proposed behavior (local backend only):**
 
-1. Try the configured default port (8765) first — preserves the
+1. **Try the persisted port first** (sub-req A). On every successful
+   bind, write the bound port to a small state file under the local
+   user-cache convention — e.g. `~/.cache/pgdp-prep/last-port` (or
+   wherever this repo's local-state convention lands; pick once and
+   document). On next start, read that file and try that port before
+   anything else, so the user's bookmark stays stable across restarts
+   as long as nothing else has grabbed the port in the meantime.
+2. If the persisted port is missing or already taken, try the
+   configured default port (8765) — preserves the canonical
    bookmarkable URL and any docs/screenshots referencing it.
-2. If `EADDRINUSE`, fall back to `port=0` (kernel picks a free port).
-   Print the actually-chosen URL clearly on stdout (and use it for the
-   browser-open hand-off).
-3. If the user passes `--port N` explicitly, fail loud on collision —
-   explicit intent, no fallback.
-4. Self-hosted / managed adapters: out of scope for this slice; keep
-   their current explicit-port behavior.
+3. If `EADDRINUSE` on both, fall back to `port=0` (kernel picks a free
+   port). Print the actually-chosen URL clearly on stdout (and use it
+   for the browser-open hand-off). Persist the chosen port for next
+   start.
+4. If the user passes `--port N` explicitly, fail loud on collision —
+   explicit intent, no fallback, no persistence read (but do persist
+   the explicit port on success so subsequent default-mode starts pick
+   it up).
+5. **In-UI URL display** (sub-req B). The running SPA must surface the
+   server's current URL/port somewhere persistent and obvious so a
+   local-mode user who has closed their console window can still
+   recover the address. Acceptable shapes: a footer line, an
+   "About" / "Server info" panel reachable from a header menu, or a
+   copy-to-clipboard button in a screen corner. Belt-and-suspenders:
+   keep the existing console print **and** add the in-UI display, so
+   closing either surface still leaves the URL recoverable. Backend
+   exposes the bound URL via a small read-only endpoint (e.g.
+   `GET /api/server-info` returning `{url, port, host}`); frontend
+   queries it once on mount.
+6. Self-hosted / managed adapters: out of scope for this slice; keep
+   their current explicit-port behavior. The in-UI URL display is
+   harmless in those shapes and can stay enabled.
 
 **Acceptance:**
 
 - Tests cover: default-port-free (binds 8765), default-port-taken-fallback
   (binds OS-assigned, logs chosen URL), explicit-`--port`-collision
   (raises / exits non-zero, no fallback).
+- **Persisted-port-reused-on-next-start:** with no other listener,
+  starting the server twice in a row binds the same port both times
+  (the second start reads `last-port` and reuses it).
+- **Persisted-port-taken-falls-through:** if `last-port` names a port
+  that is already bound by another process, the server falls through
+  to default 8765, then to `port=0`, without crashing — and rewrites
+  `last-port` to whatever it actually bound.
+- **In-UI URL visible:** an e2e (or component) test asserts the SPA
+  renders the bound URL string somewhere user-visible after mount —
+  e.g. matches `http://...:<port>` in the rendered DOM. The endpoint
+  feeding it returns the live bound port, not the configured/default
+  one.
 - Stale-process scenario from 2026-05-07 is recoverable without `kill`.
 
 **Cross-link:** sibling repo `pd-ocr-labeler-spa` has the matching
