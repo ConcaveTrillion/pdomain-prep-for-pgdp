@@ -35,7 +35,14 @@ repos:
     -   id: frontend-tsc
         name: frontend tsc -b --noEmit
         description: TypeScript project-references type-check for the React SPA.
-        entry: bash -c 'cd frontend && npx tsc -b --noEmit'
+        # bash -c so we can put mise's tool shims on PATH first —
+        # pre-commit subshells don't inherit the user's shell rc, so
+        # a bare `git commit` from a non-mise-activated shell would
+        # otherwise fail with `npx: command not found`. Mirrors the
+        # cargo-fmt/cargo-clippy pattern in pd-png-optimizer (which
+        # sources ~/.cargo/env). Falls through cleanly when mise isn't
+        # installed (CI provisions node via setup-node).
+        entry: bash -c 'if command -v mise >/dev/null 2>&1; then eval "$(mise activate bash --shims)" 2>/dev/null || true; fi; cd frontend && exec npx tsc -b --noEmit'
         language: system
         files: ^frontend/(src/.*\.(ts|tsx)|tsconfig.*\.json|package(-lock)?\.json|vite\.config\.ts)$
         pass_filenames: false
