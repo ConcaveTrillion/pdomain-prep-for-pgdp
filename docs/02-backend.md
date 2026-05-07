@@ -1,5 +1,13 @@
 # 02 — Backend
 
+> **Pipeline task-model refactor (2026-05-07):** the per-page pipeline
+> shape described below (Step 4 monolith via `process_page_cpu`,
+> `JobType.batch_*` orchestration) is being replaced by the granular
+> stage DAG specified in
+> [`docs/specs/pipeline-task-model.md`](specs/pipeline-task-model.md).
+> The text below still describes today's code; the spec is the target.
+> A full rewrite of this doc is scheduled after M2 ships.
+
 ## `Settings` and bootstrap
 
 `src/pd_prep_for_pgdp/settings.py` is a single `pydantic-settings` model that
