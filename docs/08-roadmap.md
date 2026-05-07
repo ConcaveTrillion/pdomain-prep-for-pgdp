@@ -30,85 +30,430 @@ _parked under "Deferred — remote / cloud mode" at the bottom._
 ## P0.5 — Pipeline task-model refactor (canonical local-mode work)
 
 **Spec:** [`docs/specs/pipeline-task-model.md`](specs/pipeline-task-model.md)
-(draft 2026-05-07).
+(locked 2026-05-07).
 
 User directive (2026-05-07): the current row-based pipeline (ingest /
 thumbnails / batch_process_pages / batch_extract_illustrations /
 batch_ocr / batch_text_postprocess / build_package) is too coarse-
 grained. `batch_process_pages` is a 14-sub-step monolith
-(`core/pipeline/process_page.py`); the user wants each sub-step to be
-an individually runnable, individually inspectable stage with dirty
-propagation across a DAG. The spec proposes a `page_stages` table,
-per-stage artifact storage, and a workbench artifact viewer.
+(`core/pipeline/process_page.py`); each sub-step needs to be an
+individually runnable, individually inspectable stage with dirty
+propagation across a DAG. The spec defines a `page_stages` table,
+every-intermediate per-stage artifact storage, splits-as-sibling-pages,
+and a workbench artifact viewer.
 
-**Decisions Q1–Q7 — Locked (2026-05-07).** See spec §"Open questions —
-Locked (2026-05-07)" for the full table; in summary:
+**Decisions Q1–Q10 — all locked (2026-05-07).** See spec
+§"Open questions — Locked (2026-05-07)" for the full table; key shifts
+from earlier drafts: Q3 is "every intermediate, always" (no
+checkpoint-only mode); Q6 is splits-as-sibling-pages (not config on
+`ocr_crop`); Q7 introduces an `awaiting_review` job state for
+`build_package`; Q1-followup, Q8, Q9, Q10 lock the dual-write
+reconciliation contract, the bounded deferred-write executor, the
+fail-loudly persistence semantics, and the device-aware in-memory
+artifact model respectively.
 
-+ Q1 → normalised `page_stages` SQLite table.
-+ Q2 → eager dirty propagation.
-+ Q3 → checkpoint-only artifact persistence + `PGDP_FULL_STAGE_ARTIFACTS=1`
-  debug switch (M1 must not preclude; switch may land in M2).
-+ Q4 → manual `stage_version` registry in M2.
-+ Q5 → `STAGE_IMPL[stage_id][device]` registry; LocalBackend becomes a
-  device-chooser, in M2.
-+ Q6 → splits stay as configuration to `ocr_crop` (no new DAG nodes) in M2.
-+ Q7 → `text_review` modelled as a gate stage; `build_package` gates on
-  `require_text_review` (default off in M2).
+**Memory-resident execution model.** The per-page stage DAG operates
+on in-memory image objects during a run; disk I/O is reserved for
+persistence (off the critical path via a bounded deferred-write
+executor) and partial-rerun lazy loads. M2 runner must include a
+refcount-driven in-memory cache + bounded deferred-write executor.
+M3 workbench is purely a disk read — does not require a live
+in-memory DAG run.
 
-**Memory-resident execution model added 2026-05-07.** The per-page
-stage DAG operates on in-memory image objects during a run; disk
-I/O is reserved for checkpoint persistence (off the critical path
-via a bounded deferred-write executor) and partial-rerun lazy loads.
-This impacts **M2 runner design** (must include a refcount-driven
-in-memory cache + bounded deferred-write executor) and **M3 workbench**
-(remains purely a disk read — does not require a live in-memory
-DAG run). New questions Q8 (deferred-write concurrency cap), Q9
-(failure-mode status mapping), and Q10 (canonical in-memory
-artifact format) are open in the spec and must be locked before
-M2 runner work begins. M1 (schema + DAG enumeration) remains
-unblocked because it touches neither the runner nor the workbench.
+### Per-milestone delivery + UI smoke-test verification
 
-M1 is unblocked.
+Each milestone below ships with a "How to verify by running the app"
+section so the user can `make run`, click X, observe Y, and conclude
+that the milestone is or isn't real. The UI artifacts called out in
+each subsection are the load-bearing signal — if they aren't present
+or don't behave as described, the milestone is **not** done.
 
-**Milestones:**
+The smoke tests use a known-good test zip — name it here once the user
+has identified one (e.g. `tests/fixtures/three-page-book.zip`). For
+all milestones below, "the test zip" refers to that fixture.
 
-+ **M1 — Schema + DAG enumeration.** Add `page_stages` table + indexes
-  to `SqliteDatabase`. Land a `core/pipeline/dag.py` module with the
-  stage registry, dependency map, and `descendants()` helper. No UI,
-  no runner changes. Tests: schema round-trip, topological order,
-  descendants are correct for every node.
-+ **M2 — Per-page stage runner backend + dirty propagation.** Each
-  stage gets a `STAGE_IMPL[stage_id][device]` callable. New
-  `POST /api/gpu/page-stage` endpoint with `mode ∈ {single, from, dirty}`.
-  Eager dirty cascade on rerun. Stage-version registry. Collapse
-  `LocalBackend` to device-chooser. Old endpoints
-  (`/api/gpu/process-page`, `/api/gpu/run-ocr-page`) become thin
-  shims onto the new endpoint.
-+ **M3 — Workbench artifact viewer.** Per-page route shows the stage
-  chain with status pills + per-stage artifact thumbnails + side-by-
-  side compare. Stage-controls panel filters
-  `ResolvedPageConfig` fields by which stage reads them. SSE updates
-  per stage transition.
-+ **M4 — Migration of existing projects.** Lazy-migrate on first
-  access: synthesise `page_stages` rows from legacy `processing_status`,
-  with `artifact_key` set only for stages whose legacy outputs already
-  exist on disk. Add `pgdp-prep migrate-projects --rebuild` for the
-  opt-in force-rebuild path.
-+ **M5 — Project-level orchestration fan-out.** New
-  `JobType.project_run_stage_all_pages` and `project_run_dirty` that
-  dispatch per-page stage tasks under the hood. Existing
-  `batch_process_pages` etc. job rows continue to run via a
-  compatibility shim that translates them to the new model.
-+ **M6 — Cleanup.** Remove the deprecated `batch_*` `JobType` values,
-  the old endpoints, and `process_page_cpu`'s monolithic body (now an
-  imperative composition of the stage registry callables for the
-  project-level "run everything CPU" code path).
+---
 
-**Acceptance for the whole sequence:** opening a page in the workbench
-shows a stage chain with intermediate artifact images for each
-checkpoint stage. Re-running `threshold` on a page marks `invert`
-through `text_review` dirty; `build_package` skips that page until
-`page.run_dirty(idx0)` brings it back to clean.
+#### M1 — Schema + DAG enumeration + reindex CLI
+
+**Scope:**
+
+- Add `page_stages` table + indexes to `SqliteDatabase`
+  (canonical spec §SQLite schema).
+- Add split-related columns to `pages` (`parent_page_id`,
+  `source_crop_bbox`, `split_index`, `split_at_stage`, `split_suffix`,
+  `reading_order`).
+- Land `core/pipeline/dag.py` with the 16-stage registry, dependency
+  map, and `descendants()` helper.
+- Land the `pgdp-prep reindex <project_id>` CLI (canonical spec
+  §Dual-write reconciliation) — read-only by default, `--heal` flag
+  for orphan deletion / failed-row marking.
+- No runner, no UI changes, no stage execution. Stage rows are
+  written by a stub helper that creates them in `not-run` state when
+  a project is first opened.
+
+**Required test fixtures:** any test zip; `tests/fixtures/three-page-book.zip`
+or equivalent.
+
+**How to verify by running the app (UI smoke-test):**
+
+1. `make run`. Open <http://127.0.0.1:8765>.
+2. Create a project named "M1-smoke", upload the test zip.
+3. Wait for the existing ingest / thumbnails rows to turn green.
+4. Open a terminal: `curl -s http://127.0.0.1:8765/api/pages/0000/stages | jq .`
+   (or whatever the new route ends up named). The response should be
+   a JSON array with **16 entries**, each an object with `stage_id`,
+   `status: "not-run"`, `stage_version: 1`, `artifact_key: null`. The
+   stage IDs must match the canonical spec list verbatim.
+5. `sqlite3 ~/pgdp-projects/state.db ".schema page_stages"` — should
+   show the composite-PK schema with the two indexes.
+6. `pgdp-prep reindex <project_id>` — should report "0 orphan files,
+   0 missing artifacts, 0 hash mismatches" cleanly.
+7. Manually `rm` one of the synthesised page directories
+   (`rm -rf ~/pgdp-projects/<project>/pages/0000/`) and re-run
+   `pgdp-prep reindex --heal <project_id>` — should mark every row for
+   that page `failed` and report the heal action.
+
+**Pass criterion:** the API exposes 16 not-run stages per page; the
+reindex CLI correctly reports drift; `page_stages` rows survive a
+restart.
+
+**Likely failure modes:**
+
+- "API returns 17 stages because someone added a duplicate ID without
+  deduping the registry" — surface during step 4.
+- "`reindex` reports the bare DB path for `pages/<page_id>` because the
+  page-id encoding for split children isn't implemented yet" — fine
+  for M1 since no splits exist; surface as a follow-up note.
+
+There is **no UI yet** at M1 — the API + CLI are the user-checkable
+signals.
+
+---
+
+#### M2 — Per-page stage runner + dirty propagation + bounded write pool
+
+**Scope:**
+
+- Each stage gets a `STAGE_IMPL[stage_id][device]` callable
+  (canonical spec Q5). M2 ships `"cpu"` entries for every stage; CUDA
+  entries land in M5+ as a separate slice.
+- New endpoint `POST /api/pages/{page_id}/stages/{stage_id}/run`
+  with `mode ∈ {single, from}` — runs the stage(s) synchronously,
+  marks downstream `dirty`.
+- New endpoint `GET /api/pages/{page_id}/stages/{stage_id}/artifact`
+  — streams the on-disk artifact.
+- Bounded deferred-write executor with `PGDP_STAGE_WRITE_POOL_SIZE` +
+  `PGDP_STAGE_WRITE_QUEUE_CAP` knobs (canonical spec Q8). Dual-write
+  reconciler runs every write through the transactional dance.
+- Stage-version registry (canonical spec Q4) — `STAGE_VERSIONS = {...}`
+  in `core/pipeline/dag.py`.
+- Eager dirty cascade on rerun (canonical spec §Dirty propagation).
+- `LocalBackend` collapses to a `pick_device()` helper that the
+  registry consults; old `process_page` / `run_ocr` methods on
+  GPU adapters become thin shims onto the registry.
+- Old endpoints (`/api/gpu/process-page`, `/api/gpu/run-ocr-page`)
+  become shims onto the new endpoint.
+- A read-only **Database state debug panel** in the workbench
+  (M2-only; M3 replaces with prettier UI) shows the raw
+  `page_stages` rows for the current page, so the user can confirm
+  status transitions visually.
+
+**Required test fixtures:** the test zip from M1.
+
+**How to verify by running the app (UI smoke-test):**
+
+1. `make run`. Open <http://127.0.0.1:8765>.
+2. Create a project named "M2-smoke", upload the test zip.
+3. Wait for ingest+thumbnails to finish (Step 0/1/2 row turns green
+   in the existing JobsPage).
+4. Open page f001 in the workbench. The workbench should now show a
+   stage chain rail with 16 stage chips. The post-ingest chips
+   (`ingest_source`, `thumbnail`, `auto_detect_attrs`,
+   `auto_detect_illustrations`) should be `clean` (green); the rest
+   should be `not-run` (gray).
+5. Click "Run stage: deskew" (or `auto_deskew` chip's run button).
+   Observe the chip transitions `not-run → running → clean`. The
+   artifact viewer pane should now show the `auto_deskew` output
+   image side-by-side with its input (`crop_to_content`).
+6. Click "Run stage: deskew" again. All downstream stage chips
+   (`morph_fill`, `rescale`, `canvas_map`, `ocr_crop`, `ocr`,
+   `text_postprocess`, `text_review`) should immediately transition
+   to `dirty` (yellow). DB-side: `page_stages` rows for downstream
+   stages should show `status='dirty'` — verifiable via the M2-only
+   Database state debug panel in the workbench, or via
+   `sqlite3 ~/pgdp-projects/state.db "SELECT stage_id, status FROM
+   page_stages WHERE page_id='0000'"`.
+7. Click "Run all dirty stages on this page". All chips return to
+   `clean`.
+8. Verify on-disk: `ls ~/pgdp-projects/<project>/pages/0000/stages/`
+   should list 16 stage directories, each with an `output.<ext>`.
+9. Test back-pressure: set `PGDP_STAGE_WRITE_POOL_SIZE=1` and
+   `PGDP_STAGE_WRITE_QUEUE_CAP=1`, restart, run "Run from
+   `decode_source`". The DAG should still complete (just slower).
+
+**Pass criterion:** every chip can transition not-run → running →
+clean → dirty → clean visibly, and re-running a stage cascades the
+dirty state to downstream chips within ≤500 ms.
+
+**UI artifacts that prove M2 shipped:** stage-chain rail, artifact
+viewer pane, Database state debug panel (M2 only — M3 replaces with
+prettier UI), per-stage run buttons.
+
+**Likely failure modes:**
+
+- A chip transitions to `clean` but the on-disk file under
+  `<project>/pages/<page_id>/stages/<stage_id>/output.<ext>` doesn't
+  appear → dual-write reconciliation isn't actually happening (the
+  DB row was committed without the file write). Catch by step 8.
+- Running `auto_deskew` does not mark `morph_fill` dirty → the eager
+  cascade is querying the wrong descendants set.
+
+---
+
+#### M3 — Workbench artifact viewer + stage controls panel
+
+**Scope:**
+
+- Pretty stage-chain rail (replaces M2's Database state debug
+  panel). Status pills, per-stage thumbnails, click-to-select.
+- Side-by-side artifact compare: `Stage: [▼]` and
+  `Compare with: [▼]` selectors; the framework streams the two
+  artifacts and lays them out at full image res.
+- Stage-controls panel: when a stage is selected, the panel filters
+  `ResolvedPageConfig` to only the fields that stage reads, plus
+  Apply + Run buttons.
+- SSE per-stage transitions update the rail live without a page
+  reload.
+
+**Required test fixtures:** the test zip from M1/M2.
+
+**How to verify by running the app (UI smoke-test):**
+
+1. `make run`. Open the M2-smoke project (or create a new "M3-smoke"
+   project from the test zip).
+2. Open page f001 in the workbench. The stage rail should now look
+   visually polished — 16 chips with consistent status colours, each
+   showing a small inline thumbnail of its output (when one exists).
+3. Click on the `threshold` chip. The artifact viewer pane should
+   load the threshold output image. The "Compare with" selector
+   should auto-select `grayscale`. The two images should appear
+   side-by-side at the same scale.
+4. The stage-controls panel should now show only the threshold-
+   relevant fields (e.g. `threshold_level: [Otsu auto / 140]` toggle
+   plus a numeric input). Other fields like `fuzzy_pct` should not appear.
+5. Change `threshold_level` from "Otsu auto" to `160`. Click "Apply +
+   Run this stage". The chip should flicker through running → clean,
+   the artifact viewer should swap to the new output, and downstream
+   chips should turn `dirty` — all without a page reload.
+6. Open a second browser tab on the same page. In tab 1, click "Run
+   from `auto_deskew`". Tab 2 should observe the chip statuses
+   updating live via SSE (no manual refresh).
+
+**Pass criterion:** the workbench shows a real per-stage artifact
+strip on a real page in a real browser, and changing one stage's
+config produces a visible new artifact within ≤2 s.
+
+**UI artifacts that prove M3 shipped:** polished stage-chain rail
+with thumbnails; functional side-by-side artifact viewer; stage-
+filtered controls panel; live SSE updates across tabs.
+
+**Likely failure modes:**
+
+- The artifact viewer shows a stale image after a stage rerun → the
+  artifact endpoint is caching too aggressively or the URL didn't
+  change (it should include the row's `last_run_at` as a cache
+  buster).
+- The stage-controls panel shows every config field regardless of
+  selected stage → the field-to-stage map on the frontend is empty
+  / wrong.
+
+---
+
+#### M4 — Migration of existing projects + disk-cost UI
+
+**Scope:**
+
+- Lazy-migrate on first access: synthesise `page_stages` rows from
+  legacy `processing_status` (canonical spec §Migration story).
+  Mark every applicable stage `dirty` (the legacy artifacts aren't
+  in the new tree).
+- `pgdp-prep migrate-projects --force-rebuild` CLI for users who
+  want the opt-in force-rebuild path.
+- Disk-cost callout in the project header banner: "Stage artifacts
+  for this project: 12.4 GB / ~16 GB estimated full-DAG. Reclaim
+  space?" with a click-through to a future `--prune-stage-artifacts`
+  flow (UI placeholder; actual prune lands later).
+
+**Required test fixtures:** a pre-existing project from before
+M1–M3. If none exists, the user should run M0 (the current main)
+end-to-end on a real book first, then switch branches to M4 and
+verify migration.
+
+**How to verify by running the app (UI smoke-test):**
+
+1. Before switching branches: `make run` on the pre-M1 codebase.
+   Create a project "M4-pre-migrate", upload the test zip, run the
+   batch pipeline through to "complete" status. Quit.
+2. Switch to the M4 branch: `make run`. Open the same project.
+3. The page list should still load; pages should still be navigable.
+4. Open a page in the workbench. The stage chain rail should show
+   every applicable stage as `dirty` (yellow) — not `clean`, not
+   `not-run`. The page's `processing_status` rolled-up view should
+   read "needs reprocessing" or similar.
+5. The project header banner should show the disk-cost estimate and
+   a "Reclaim space" button (placeholder; it should at minimum link
+   to a help page or open a "coming soon" dialog).
+6. Click "Run all dirty stages on this page". All chips should
+   transition to `clean` and the per-stage artifacts should appear
+   under `pages/<page_id>/stages/`.
+7. From a fresh terminal:
+   `pgdp-prep migrate-projects --force-rebuild <project_id>`. The CLI
+   should clear all `page_stages` rows for that project and all
+   on-disk stage artifacts under `pages/<page_id>/stages/`,
+   leaving source images and thumbnails untouched.
+
+**Pass criterion:** opening a pre-M1 project produces a sensible
+"every stage is dirty" view, and the user can recover full state by
+running dirty.
+
+**UI artifacts that prove M4 shipped:** project banner with
+disk-cost estimate; the page list still works for old projects; the
+stage rail correctly shows old projects as `dirty`.
+
+**Likely failure modes:**
+
+- The page list crashes because the migration didn't synthesise rows
+  for some pages (e.g. ones with `processing_status='error'`).
+- The disk-cost banner shows 0 GB or NaN — the estimator is reading
+  the wrong directory.
+
+---
+
+#### M5 — Project-level orchestration fan-out + `awaiting_review` gate
+
+**Scope:**
+
+- `JobType.project_run_stage_all_pages` and `project_run_dirty`
+  (canonical spec §API surface > Project-level stage routes) that
+  dispatch per-page stage tasks under the hood.
+- Existing `batch_process_pages` etc. job rows continue to run via
+  a compatibility shim that translates them to the new model.
+- `awaiting_review` job state implementation (canonical spec Q7):
+  `POST /api/projects/{id}/build-package` parks the job when any
+  proof-range page is unreviewed; project banner + Open Tasks bell
+  update; auto-resume on last attestation.
+- The full-power `STAGE_IMPL` cutover: every existing call site
+  routes through the registry. Old `LocalBackend.process_page` etc.
+  methods become 1-line shims onto registry calls.
+
+**Required test fixtures:** the test zip with at least 3 pages.
+
+**How to verify by running the app (UI smoke-test):**
+
+1. `make run`. Create "M5-smoke", upload the test zip.
+2. Run ingest + thumbnails. Open the JobsPage.
+3. Click "Run all dirty stages across project". Observe a new
+   project-level job row of type `project.run_dirty` with a progress
+   bar, plus per-page child stage jobs flowing underneath. The
+   progress bar should tick from 0 to N as pages complete.
+4. After the project run completes, click "Build package" in the
+   PackagePage.
+5. Because no pages have been reviewed yet, the job should land in
+   the `awaiting_review` state. The project banner should appear:
+   "3 pages awaiting review before package can build" with a
+   "Review next page" button. The Open Tasks bell should show "3"
+   in the top-right.
+6. Click "Review next page". The workbench should open on page
+   f001. Click "Mark page reviewed". The banner count should drop
+   to "2" and the bell badge to "2".
+7. Continue marking pages reviewed. After the last attestation, the
+   `awaiting_review` job should auto-resume to `running`, then
+   `complete`. The package should be downloadable.
+8. To verify the deprecation shim: from a terminal,
+   `curl -X POST http://127.0.0.1:8765/api/gpu/jobs -d
+   '{"job_type": "batch_process_pages", "project_id": "..."}'`.
+   Observe a job row that completes successfully (the shim
+   translates it).
+
+**Pass criterion:** the user can kick off a project-level fan-out
+and watch its progress; `build_package` correctly parks on the
+text-review gate and auto-resumes; the legacy job-type shims still
+work.
+
+**UI artifacts that prove M5 shipped:** project banner with
+unreviewed-count countdown; Open Tasks bell with live badge; project-
+level progress bar in JobsPage that ticks per-page; auto-resume of
+parked `build_package` job.
+
+**Likely failure modes:**
+
+- Marking the last page reviewed doesn't auto-resume the job → the
+  runner isn't re-checking the gate on `text_review.clean` writes.
+- The progress bar shows raw stage counts (e.g. "page 1 stage 3 of
+  16") instead of pages-complete; that's noise — should aggregate to
+  per-page granularity.
+
+---
+
+#### M6 — Cleanup
+
+**Scope:**
+
+- Remove the deprecated `JobType.batch_*` values.
+- Remove the legacy endpoints (`/api/gpu/process-page`,
+  `/api/gpu/run-ocr-page`, the `batch_*` paths on `/api/gpu/jobs`).
+- Delete `LocalBackend` and `CpuBackend` classes; the registry +
+  `pick_device()` helper become the only path.
+- Delete `process_page_cpu`'s monolithic body (now an imperative
+  composition of registry calls in a project-level "run everything
+  CPU" helper).
+- Remove the M2-era debug panel from the workbench (M3 replaced it,
+  but M3 may have left the legacy code path; M6 removes any dead UI).
+
+**Required test fixtures:** the M5 verified end-to-end project.
+
+**How to verify by running the app (UI smoke-test):**
+
+1. `grep -r "JobType.batch_" src/` — should return **empty**.
+2. `grep -r "class LocalBackend" src/` — should return **empty**.
+3. `grep -r "process_page_cpu" src/` — should return **empty**.
+4. `make run`. Open the existing M5 project. Every workbench
+   affordance, project banner, JobsPage interaction should still
+   work end-to-end exactly as in M5.
+5. Verify a fresh project: create "M6-fresh", upload the test zip,
+   run all dirty stages, mark every page reviewed, build package.
+   The full flow should complete with the package downloadable.
+6. Verify the legacy endpoints are gone:
+   `curl -X POST http://127.0.0.1:8765/api/gpu/process-page` should
+   return 404 (the route no longer exists).
+
+**Pass criterion:** the codebase has no references to the deprecated
+names; the user-visible workflow still works; legacy endpoints
+correctly 404.
+
+**UI artifacts that prove M6 shipped:** none new — M6 is a deletion
+milestone. The signal is "everything from M5 still works _and_ the
+codebase is smaller."
+
+**Likely failure modes:**
+
+- Removing `LocalBackend` breaks a route handler that imports it
+  directly without going through the registry → caught by the
+  workbench failing on step 4.
+- Removing `process_page_cpu` breaks the legacy `batch_process_pages`
+  shim (the shim should be gone too in M6, but some callers may have
+  been missed).
+
+---
+
+**Acceptance for the whole sequence:** opening any page in the
+workbench shows a stage chain with intermediate artifact images for
+every stage. Re-running `threshold` on a page marks `invert` through
+`text_review` dirty; `build_package` parks in `awaiting_review`
+until `page.run_dirty(idx0)` brings the page back to clean and the
+user attests `text_review`. Project-level fan-out works end-to-end
+with the new job types; legacy `batch_*` job types are gone.
 
 ---
 
@@ -121,7 +466,7 @@ marquee bulk-select, a11y polish, generated-types swap) all shipped —
 see `08-roadmap-shipped.md`. One follow-up remains and is **blocked on
 a user schema decision**:
 
-+ **Undo / soft-delete strategy.** The v1 endpoint hard-rewrites
+- **Undo / soft-delete strategy.** The v1 endpoint hard-rewrites
   `<root>.words.json` + `<root>.txt`, so honest single-level undo
   needs either (a) a server-side `OcrWord.deleted: bool` flag with a
   flip-restore endpoint and `remaining_words` filtered to non-deleted
@@ -176,18 +521,24 @@ next slice that touches its surface):
 
 ## P3 — Pipeline depth
 
-### 14. CUDA path (LocalBackend) — primitives only
+### 14. CUDA path (image-processing fast path) — superseded by §P0.5
 
-**Status (2026-05-07):** `LocalBackend` is no longer a NotImplementedError
-stub — it now subclasses `CpuBackend`, which means the CPU pipeline runs
-on a CUDA host with DocTR/PyTorch automatically picking up `cuda:0`. So
-end users with a GPU get GPU-accelerated OCR today via the same code
-path as CPU users. What's still open is the Step 4 image-processing
-fast-path: replace cv2/numpy with
-`pd_book_tools.image_processing.cupy_processing` primitives + nvImageCodec
-for source decode. Orchestration shape is identical; only the inner
-primitives change. Behind a `[cuda]` extra so the wheel install stays
-slim.
+**Status (2026-05-07):** **superseded by §P0.5 M5+.** The class-level
+"`LocalBackend` adds CUDA primitives" framing is gone — under the new
+task model, CUDA primitives land as `STAGE_IMPL[stage_id]['cuda']`
+entries in the registry, registered alongside the CPU entries. M2
+ships `"cpu"` entries for every stage; M5+ adds `"cuda"` entries for
+the proofing-chain stages (`grayscale`, `threshold`,
+`find_content_edges`, `auto_deskew`, `morph_fill`, `rescale`,
+`canvas_map`) backed by `pd_book_tools.image_processing.cupy_processing`
+plus nvImageCodec for source decode. Behind a `[cuda]` extra so the
+wheel install stays slim.
+
+This is **not** a separate roadmap item; track it as a slice
+inside M5 once the registry is the only call path. End users with a
+GPU already get GPU-accelerated OCR today (DocTR/PyTorch auto-pick
+`cuda:0`); only the Step-4 image processing is still CPU-bound on a
+CUDA host.
 
 ### 15. Shared GPU container backend
 
