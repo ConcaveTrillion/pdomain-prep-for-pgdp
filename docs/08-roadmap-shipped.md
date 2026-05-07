@@ -490,3 +490,39 @@ normalisation path. Three test sites in `TextReviewPage.test.tsx`
 updated to the new fixture shape.
 
 - `<TBD>` feat(frontend): adopt react-hotkeys-hook for TextReviewPage shortcuts (§13a step 2)
+
+---
+
+## §L1 steps 1 + 2 — port auto-select fallback + persistence
+
+Solves the "stale-process blocks startup" UX gap surfaced 2026-05-07
+(a 21-hour-old `python3 -m http.server 8765` blocked `pgdp-prep`).
+`__main__.py` now picks a bindable port before handing off to uvicorn:
+
+1. **Step 1 — EADDRINUSE fallback.** `_pick_port(host, preferred,
+   *, explicit, config_dir)` probe-binds with a real TCP socket. If
+   `preferred` is busy and the user accepted the default, fall back
+   to `bind(0)` and log the substitution. `--port N` collision still
+   raises (explicit intent preserved). Skipped under `--reload`
+   because uvicorn re-spawns the process — a hard error is more
+   informative in dev-loop mode. Commit: `ce965a2`.
+
+2. **Step 2 — `last-port` persistence.** Every successful bind is
+   written to `<config_dir>/last-port` (default
+   `~/.config/pgdp-prep/last-port`). On the next default-mode start
+   the picker reads that file first and re-prefers the persisted
+   port before falling through to default 8765 → port=0. Explicit
+   `--port N` ignores the file on read but rewrites on success
+   (so subsequent default-mode starts pick up the explicit choice).
+   Persistence write is best-effort — losing it just means the next
+   start falls back to default behavior. Commit: `d958f4b`.
+
+Tests: `tests/test_port_autoselect.py` (4) + `tests/test_port_persistence.py`
+(11). All probes use real loopback sockets — no mocks, no fixtures
+beyond `tmp_path`, sub-millisecond per test on Linux.
+
+Step 3 (in-UI URL display + `GET /api/server-info` endpoint) is the
+remaining sub-requirement and stays in the active roadmap.
+
+- `ce965a2` feat(cli): port auto-select fallback for pgdp-prep (§L1 step 1)
+- `d958f4b` feat(cli): persist last-port across restarts (§L1 step 2)

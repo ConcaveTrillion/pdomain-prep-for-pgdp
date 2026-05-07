@@ -21,71 +21,43 @@ flow is fully shipped.
 
 ### L1. Local-mode port auto-select fallback for `pgdp-prep`
 
-**Motivation:** Today `pgdp-prep` binds to a hardcoded port (8765) and
-dies if anything else is on that port — including stale orphaned
-processes. Hit in the wild on 2026-05-07 when a 21-hour-old
-`python3 -m http.server 8765` blocked startup. For local-mode dev UX
-the server should fall back to an OS-assigned free port instead of
-crashing.
+**Steps 1 + 2 shipped** — see `08-roadmap-shipped.md` §L1. Core
+EADDRINUSE-fallback (`_pick_port`) and `last-port` persistence under
+`<config_dir>/last-port` are live; explicit `--port N` collision still
+raises. Below is what remains.
 
-**Proposed behavior (local backend only):**
+#### L1 step 3 — in-UI URL display (sub-req B from original L1)
 
-1. **Try the persisted port first** (sub-req A). On every successful
-   bind, write the bound port to a small state file under the local
-   user-cache convention — e.g. `~/.cache/pgdp-prep/last-port` (or
-   wherever this repo's local-state convention lands; pick once and
-   document). On next start, read that file and try that port before
-   anything else, so the user's bookmark stays stable across restarts
-   as long as nothing else has grabbed the port in the meantime.
-2. If the persisted port is missing or already taken, try the
-   configured default port (8765) — preserves the canonical
-   bookmarkable URL and any docs/screenshots referencing it.
-3. If `EADDRINUSE` on both, fall back to `port=0` (kernel picks a free
-   port). Print the actually-chosen URL clearly on stdout (and use it
-   for the browser-open hand-off). Persist the chosen port for next
-   start.
-4. If the user passes `--port N` explicitly, fail loud on collision —
-   explicit intent, no fallback, no persistence read (but do persist
-   the explicit port on success so subsequent default-mode starts pick
-   it up).
-5. **In-UI URL display** (sub-req B). The running SPA must surface the
-   server's current URL/port somewhere persistent and obvious so a
-   local-mode user who has closed their console window can still
-   recover the address. Acceptable shapes: a footer line, an
-   "About" / "Server info" panel reachable from a header menu, or a
-   copy-to-clipboard button in a screen corner. Belt-and-suspenders:
-   keep the existing console print **and** add the in-UI display, so
-   closing either surface still leaves the URL recoverable. Backend
-   exposes the bound URL via a small read-only endpoint (e.g.
-   `GET /api/server-info` returning `{url, port, host}`); frontend
-   queries it once on mount.
-6. Self-hosted / managed adapters: out of scope for this slice; keep
-   their current explicit-port behavior. The in-UI URL display is
-   harmless in those shapes and can stay enabled.
+Belt-and-suspenders: the console print is fine for a fresh session
+but a user who closes their terminal can't recover the URL. The
+running SPA should surface the server's current URL/port somewhere
+persistent and obvious — footer line, "About" / "Server info" panel,
+or a copy-to-clipboard button in a screen corner.
+
+Backend exposes the bound URL via a small read-only endpoint
+(e.g. `GET /api/server-info` returning `{url, port, host}`); frontend
+queries it once on mount and renders the result.
+
+**Plumbing note:** the bound port is decided in `__main__.py` BEFORE
+`uvicorn.run`, so the running app needs a way to learn it. Cleanest:
+`__main__.py` sets `os.environ["PGDP_PORT"] = str(bound_port)` (and
+similarly for host) before the uvicorn handoff so child workers
+inherit the bound values via `Settings`. Endpoint then reads
+`Settings.host` / `Settings.port` directly. Self-hosted / managed
+adapters: harmless, can stay enabled.
 
 **Acceptance:**
 
-- Tests cover: default-port-free (binds 8765), default-port-taken-fallback
-  (binds OS-assigned, logs chosen URL), explicit-`--port`-collision
-  (raises / exits non-zero, no fallback).
-- **Persisted-port-reused-on-next-start:** with no other listener,
-  starting the server twice in a row binds the same port both times
-  (the second start reads `last-port` and reuses it).
-- **Persisted-port-taken-falls-through:** if `last-port` names a port
-  that is already bound by another process, the server falls through
-  to default 8765, then to `port=0`, without crashing — and rewrites
-  `last-port` to whatever it actually bound.
-- **In-UI URL visible:** an e2e (or component) test asserts the SPA
-  renders the bound URL string somewhere user-visible after mount —
-  e.g. matches `http://...:<port>` in the rendered DOM. The endpoint
-  feeding it returns the live bound port, not the configured/default
-  one.
-- Stale-process scenario from 2026-05-07 is recoverable without `kill`.
+- `GET /api/server-info` returns the live bound `{url, port, host}`,
+  not the configured-default one (test by setting `PGDP_PORT=...`
+  and asserting the response).
+- Component or e2e test asserts the SPA renders the bound URL string
+  somewhere user-visible after mount.
+- Copy-to-clipboard affordance present (or equivalent — a selectable
+  text node is acceptable).
 
 **Cross-link:** sibling repo `pd-ocr-labeler-spa` has the matching
-roadmap item for symmetry. Its commit `7c084ce` already moved the
-listener-bind ahead of the browser-open call; port auto-select is the
-next step there. Same design should apply to both apps.
+roadmap item for symmetry. Same design should apply to both apps.
 
 ---
 
