@@ -147,6 +147,82 @@ describe("ProjectListPage CreateProjectModal a11y", () => {
   });
 });
 
+describe("ProjectListPage delete confirm uses AlertDialog (§13a step 1b)", () => {
+  it("opens an alertdialog with project name in the description and locks scroll", async () => {
+    server.use(
+      http.get("/api/data/projects", () =>
+        HttpResponse.json([makeProject({ name: "Belloc — The Four Men" })]),
+      ),
+    );
+
+    renderWithProviders(<ProjectListPage />);
+
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", { name: /delete project/i }),
+    );
+
+    // Radix sets role="alertdialog" (NOT "dialog"); accessible name
+    // wires from <AlertDialogTitle>.
+    const dlg = await screen.findByRole("alertdialog", {
+      name: /delete project/i,
+    });
+    // The destination project's name appears in the body so the user
+    // can confirm what they're about to delete.
+    expect(dlg).toHaveTextContent(/Belloc/);
+    expect(document.body.hasAttribute("data-scroll-locked")).toBe(true);
+  });
+
+  it("calls DELETE /api/data/projects/:id and closes when Delete is confirmed", async () => {
+    let deleteCalled = false;
+    server.use(
+      http.get("/api/data/projects", () => HttpResponse.json([makeProject()])),
+      http.delete("/api/data/projects/prj_abc123", () => {
+        deleteCalled = true;
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+
+    renderWithProviders(<ProjectListPage />);
+
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", { name: /delete project/i }),
+    );
+    await screen.findByRole("alertdialog");
+    await user.click(screen.getByRole("button", { name: /^delete$/i }));
+
+    // After confirm, the alertdialog unmounts and the row's mutation
+    // fired DELETE.
+    await screen.findByRole("button", { name: /delete project/i });
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(deleteCalled).toBe(true);
+  });
+
+  it("does NOT call DELETE when Cancel is clicked", async () => {
+    let deleteCalled = false;
+    server.use(
+      http.get("/api/data/projects", () => HttpResponse.json([makeProject()])),
+      http.delete("/api/data/projects/prj_abc123", () => {
+        deleteCalled = true;
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+
+    renderWithProviders(<ProjectListPage />);
+
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", { name: /delete project/i }),
+    );
+    await screen.findByRole("alertdialog");
+    await user.click(screen.getByRole("button", { name: /cancel/i }));
+
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(deleteCalled).toBe(false);
+  });
+});
+
 describe("ProjectListPage create-project flow", () => {
   it("submits the name + zip upload and POSTs CreateProjectRequest with source_type=zip", async () => {
     const createCalls: CreateProjectRequest[] = [];

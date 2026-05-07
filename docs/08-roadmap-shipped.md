@@ -408,3 +408,33 @@ Spec: `docs/dev-local-upgrade-flow.md`. Tests: 13 in
 `tests/test_detect_dev_local.py` exercising the script with a faked
 `uv` on PATH (subprocess shells to `python scripts/detect_dev_local.py`
 in a tmp dir with a stub `uv` shell script + isolated `.venv/`).
+
+---
+
+## §13a step 1b — Radix AlertDialog adoption (ProjectListPage delete confirm)
+
+Second wave of the §13a Radix swap. Adds `@radix-ui/react-alert-dialog`
+and a thin `frontend/src/components/ui/AlertDialog.tsx` wrapper
+exporting `AlertDialog` / `AlertDialogContent` / `AlertDialogTitle` /
+`AlertDialogDescription` / `AlertDialogCancel` / `AlertDialogAction`.
+The `ProjectListPage` per-row delete-confirm — previously an inline
+`{confirming ? <Yes/Cancel buttons> : <⋯ trigger>}` toggle inside the
+row — collapses to a real WAI-ARIA `alertdialog` with focus-trap,
+scroll-lock, Escape-to-close, and a project-name confirmation body so
+the user can verify what they're about to delete.
+
+`AlertDialog` is the sibling of `Dialog` for *destructive*
+confirmations: `role="alertdialog"` (Radix sets it automatically),
+overlay-click does NOT dismiss (only Cancel or Action), and Radix
+focuses Cancel on open per the WAI-ARIA pattern so an accidental
+Enter doesn't blow away a project. Same wrapper hygiene as `Dialog`:
+no `aria-labelledby` forwarding from caller props (Radix's
+`...contentProps` spread would override the auto-wired value), and
+`react-refresh/only-export-components` silenced per re-export line
+because the rule can't see through `const X = RadixAlertDialog.Y`.
+
+Three new tests in `ProjectListPage.test.tsx` — alertdialog opens with
+project name + scroll-lock, Delete fires `DELETE
+/api/data/projects/:id`, Cancel does not.
+
+- `<TBD>` feat(frontend): adopt Radix AlertDialog for delete confirm (§13a step 1b)

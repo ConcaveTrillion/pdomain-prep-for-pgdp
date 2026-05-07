@@ -4,6 +4,14 @@ import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import type { components } from "../api/types.gen";
 import { FormErrorBanner } from "../components/FormErrorBanner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogTitle,
+} from "../components/ui/AlertDialog";
 import { Dialog, DialogContent, DialogTitle } from "../components/ui/Dialog";
 
 type CreateProjectRequest = components["schemas"]["CreateProjectRequest"];
@@ -249,37 +257,43 @@ function ProjectListRow({ project }: { project: Project }) {
           </div>
         </Link>
 
-        {confirming ? (
-          <div className="flex items-center gap-1 text-xs">
-            <span className="text-slate-700">Delete project?</span>
-            <button
+        <button
+          onClick={(e) => {
+            e.preventDefault();
+            setConfirming(true);
+          }}
+          className="ml-3 rounded px-2 py-1 text-slate-400 hover:bg-slate-100 hover:text-rose-600"
+          aria-label="Delete project"
+          title="Delete project"
+        >
+          ⋯
+        </button>
+      </div>
+
+      <AlertDialog open={confirming} onOpenChange={setConfirming}>
+        <AlertDialogContent>
+          <AlertDialogTitle className="text-lg font-semibold">
+            Delete project?
+          </AlertDialogTitle>
+          <AlertDialogDescription className="text-sm text-slate-600">
+            This will permanently remove{" "}
+            <span className="font-medium text-slate-900">{project.name}</span>{" "}
+            and its uploaded scans. This action cannot be undone.
+          </AlertDialogDescription>
+          <div className="flex justify-end gap-2 pt-2">
+            <AlertDialogCancel className="rounded border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-100">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
               onClick={() => del.mutate()}
               disabled={del.isPending}
-              className="rounded bg-rose-600 px-2 py-0.5 text-white hover:bg-rose-700 disabled:opacity-50"
+              className="rounded bg-rose-600 px-3 py-1.5 text-sm text-white hover:bg-rose-700 disabled:opacity-50"
             >
-              Yes
-            </button>
-            <button
-              onClick={() => setConfirming(false)}
-              className="rounded border border-slate-300 px-2 py-0.5 hover:bg-slate-100"
-            >
-              Cancel
-            </button>
+              Delete
+            </AlertDialogAction>
           </div>
-        ) : (
-          <button
-            onClick={(e) => {
-              e.preventDefault();
-              setConfirming(true);
-            }}
-            className="ml-3 rounded px-2 py-1 text-slate-400 hover:bg-slate-100 hover:text-rose-600"
-            aria-label="Delete project"
-            title="Delete project"
-          >
-            ⋯
-          </button>
-        )}
-      </div>
+        </AlertDialogContent>
+      </AlertDialog>
     </li>
   );
 }
