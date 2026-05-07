@@ -10,12 +10,22 @@ import {
 import type Konva from "konva";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
-import type {
-  AlignmentOverride,
-  PageConfigOverrides,
-  PageRecord,
-  PageType,
-} from "../api/types";
+import type { components } from "../api/types.gen";
+
+type AlignmentOverride = components["schemas"]["AlignmentOverride"];
+type PageRecord = components["schemas"]["PageRecord"];
+type PageType = components["schemas"]["PageType"];
+// Local form state mutates fields incrementally → use the Input variant
+// (every field optional). PageRecord.config_overrides on the wire is the
+// Output variant (every field present), but the workbench reads via React
+// state typed as Input; TypeScript narrows fine because Output is structurally
+// a subtype.
+type PageConfigOverrides = components["schemas"]["PageConfigOverrides-Input"];
+// PATCH /api/data/projects/{id}/pages/{idx0} accepts UpdatePageRequest
+// (Input-side, fields nullable). The previous hand-written shape used
+// Partial<PageRecord> which conflated Input and Output; types.gen forces us
+// to be precise.
+type UpdatePageRequest = components["schemas"]["UpdatePageRequest"];
 import { useJobProgress } from "../hooks/useJobProgress";
 import { useActiveBatchJob } from "../hooks/useActiveBatchJob";
 
@@ -119,7 +129,7 @@ export function PageWorkbenchPage() {
   });
 
   const commitOverrides = useMutation({
-    mutationFn: (patch: Partial<PageRecord>) =>
+    mutationFn: (patch: UpdatePageRequest) =>
       api.patch<PageRecord>(
         `/api/data/projects/${projectId}/pages/${idx0}`,
         patch,
