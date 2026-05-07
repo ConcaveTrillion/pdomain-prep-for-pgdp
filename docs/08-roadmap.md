@@ -68,26 +68,22 @@ for local; Postgres has built-in TS.
 
 `specs/00-overview.md:57,126` and `specs/03-ui-layout.md:5,404` name
 shadcn/ui (Radix-backed) as the intended component library.
-**Steps 1, 1b, 2, and 3 shipped** (see `08-roadmap-shipped.md` §13a):
-Radix Dialog and AlertDialog wrappers retired the hand-rolled
-ProjectListPage modal + delete confirm; `sonner` + `<Toaster>` at the
-app root + the side-effect-only `<FormErrorBanner>` retired the inline
-red error bodies; `vite-tsconfig-paths` + `@/*` paths replaced the
-need for `../../` import chains as the tree deepens.
+**All major library swaps shipped** (see `08-roadmap-shipped.md` §13a
+steps 1, 1b, 2, 3): Radix Dialog + AlertDialog wrappers retired the
+hand-rolled ProjectListPage modal + delete confirm; `sonner` +
+`<Toaster>` retired the inline red error bodies; `vite-tsconfig-paths`
+gave us `@/*` aliases for the deepening tree; `react-hotkeys-hook`
+folded the raw `window.addEventListener("keydown", ...)` in
+TextReviewPage into a hook with built-in form-tag scoping.
 
-Remaining open work (no prescribed milestone, pick whichever pairs
-with the next slice that touches its surface):
+Remaining open work (opportunistic, pick whichever pairs with the
+next slice that touches its surface):
 
 1. **More Radix primitives** for `Tabs`, `Select`, `Popover`,
    `Tooltip`. The `Dialog` and `AlertDialog` primitives in
    `components/ui/` are the template — install the relevant
-   `@radix-ui/react-*`, write a thin wrapper, swap in callers.
-2. **`react-hotkeys-hook`** for keyboard shortcuts. Today the
-   Delete/Backspace/Escape handler in `TextReviewPage.tsx` is a raw
-   `window.addEventListener("keydown", ...)` with hand-written
-   scope checks against `tagName` and `contentEditable` (tick 22 / 24);
-   a hook layer would fold that into a reusable scope and leave room
-   for Prev/Next-page bindings on `PageWorkbenchPage`.
+   `@radix-ui/react-*`, write a thin wrapper, swap in callers. No
+   active surface forces the swap yet; pick when one comes up.
 
 ---
 

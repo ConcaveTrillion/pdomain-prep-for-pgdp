@@ -429,10 +429,12 @@ describe("TextReviewPage §9a delete-words flow", () => {
     // selection state actually flipped.
     await screen.findByRole("button", { name: /^Delete 2 words$/i });
 
-    // Press Delete on the body (NOT in the textarea — the keydown
-    // handler is scope-aware and would no-op there). Window-level
-    // keydown is what the page listens for.
-    fireEvent.keyDown(window, { key: "Delete" });
+    // Press Delete on document.body (NOT in the textarea — the hotkey
+    // hook ignores INPUT/TEXTAREA focus by default, matching the
+    // previous hand-rolled scope check). `react-hotkeys-hook` keys off
+    // `event.code`, so include both `key` and `code` — `key` alone is
+    // silently dropped by the hook's normalisation path.
+    fireEvent.keyDown(document.body, { key: "Delete", code: "Delete" });
 
     await waitFor(() => {
       expect(deleteCalls).toHaveLength(1);
@@ -500,9 +502,9 @@ describe("TextReviewPage §9a delete-words flow", () => {
       screen.getByRole("button", { name: /^Clear selection$/i }),
     ).toBeInTheDocument();
 
-    // Press Escape on the body — handler is scope-aware (mirrors the
-    // Delete keydown path) and clears `selectedWordIds`.
-    fireEvent.keyDown(window, { key: "Escape" });
+    // Press Escape on document.body — same hotkey-hook scope rules
+    // apply; `code` is required (see Delete-keydown comment above).
+    fireEvent.keyDown(document.body, { key: "Escape", code: "Escape" });
 
     // Post-Esc: Delete reverts to the empty-selection label and is
     // disabled, Clear button unmounts.
@@ -614,7 +616,7 @@ describe("TextReviewPage §9a delete-words flow", () => {
     // No rect clicks → empty selection → Delete must not fire a
     // request. Give the event loop a tick for any spurious mutation
     // to surface, then assert nothing landed.
-    fireEvent.keyDown(window, { key: "Delete" });
+    fireEvent.keyDown(document.body, { key: "Delete", code: "Delete" });
     await new Promise((r) => setTimeout(r, 20));
     expect(deleteCalls).toHaveLength(0);
 

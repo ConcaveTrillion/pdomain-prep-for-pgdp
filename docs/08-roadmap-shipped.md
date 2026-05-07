@@ -464,3 +464,29 @@ existing `../../` chains to convert — the alias is preparatory
 infrastructure for the deeper component tree to come.
 
 - `<TBD>` chore(frontend): add vite-tsconfig-paths + `@/*` aliases (§13a step 3)
+
+---
+
+## §13a step 2 — `react-hotkeys-hook` for TextReviewPage shortcuts
+
+Adds `react-hotkeys-hook@^5` and replaces the raw
+`window.addEventListener("keydown", ...)` block in `TextReviewPage` with
+two `useHotkeys` calls — one for `delete, backspace` (bulk-delete) and
+one for `escape` (clear selection). The hand-written scope check
+against `tagName === "TEXTAREA" || target.isContentEditable` is gone:
+the hook ignores INPUT / TEXTAREA / SELECT focus by default
+(`enableOnFormTags` opt-in for the rare exception), and exposes a
+`scopes` mechanism for future Prev/Next-page bindings on
+`PageWorkbenchPage` without re-deriving target sniffing.
+
+**Test-fixture quirk** (preserve in agent memory): `react-hotkeys-hook`
+v5 keys off `event.code`, NOT `event.key`. Tests that previously did
+`fireEvent.keyDown(window, { key: "Delete" })` now must dispatch on
+`document.body` (not window — the hook attaches to `document` and
+fireEvent doesn't bubble window→document) and pass both `key` and
+`code`: `fireEvent.keyDown(document.body, { key: "Delete", code:
+"Delete" })`. `key` alone is silently dropped by the hook's
+normalisation path. Three test sites in `TextReviewPage.test.tsx`
+updated to the new fixture shape.
+
+- `<TBD>` feat(frontend): adopt react-hotkeys-hook for TextReviewPage shortcuts (§13a step 2)

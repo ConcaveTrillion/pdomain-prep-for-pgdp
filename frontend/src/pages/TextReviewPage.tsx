@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useHotkeys } from "react-hotkeys-hook";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import type { components } from "../api/types.gen";
@@ -173,40 +174,35 @@ export function TextReviewPage() {
     },
   });
 
-  // §9a: window-level Delete / Backspace fires the bulk-delete
-  // mutation. Scope-aware — when focus is inside the textarea (or
-  // any editable element) we do nothing, so the keys retain their
-  // normal character-deletion semantics. Pressing Delete with an
-  // empty selection is a no-op so spurious round-trips don't hit the
-  // server. Escape clears the current selection (same scope rules so
-  // Esc doesn't fight any modal/dropdown that owns it). Declared
-  // after `deleteWords` because the effect closure captures the
-  // mutation; flipping the order would TDZ-throw on first render.
-  useEffect(() => {
-    const handler = (ev: KeyboardEvent) => {
-      if (ev.key !== "Delete" && ev.key !== "Backspace" && ev.key !== "Escape")
-        return;
-      const target = ev.target as HTMLElement | null;
-      if (target) {
-        const tag = target.tagName;
-        if (tag === "TEXTAREA" || tag === "INPUT" || target.isContentEditable) {
-          return;
-        }
-      }
-      if (ev.key === "Escape") {
-        if (selectedWordIds.size === 0) return;
-        ev.preventDefault();
-        setSelectedWordIds(new Set());
-        setLiveMessage("Cleared selection");
-        return;
-      }
+  // §9a / §13a-step-2: bulk-delete + clear-selection hotkeys via
+  // `react-hotkeys-hook`. The hook handles scope automatically — it
+  // ignores INPUT / TEXTAREA / SELECT focus by default (see
+  // `enableOnFormTags`), which gives us the same scope guard the
+  // hand-rolled tagName / contentEditable check provided previously.
+  // `preventDefault: true` keeps the browser from acting on Backspace
+  // (back-navigation in some browsers) when the page handles it.
+  // Declared after `deleteWords` because the callback closure captures
+  // the mutation; flipping the order would TDZ-throw on first render.
+  useHotkeys(
+    "delete, backspace",
+    (ev) => {
       if (selectedWordIds.size === 0) return;
       ev.preventDefault();
       deleteWords.mutate(Array.from(selectedWordIds));
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [selectedWordIds, deleteWords]);
+    },
+    { preventDefault: true },
+    [selectedWordIds, deleteWords],
+  );
+  useHotkeys(
+    "escape",
+    (ev) => {
+      if (selectedWordIds.size === 0) return;
+      ev.preventDefault();
+      setSelectedWordIds(new Set());
+      setLiveMessage("Cleared selection");
+    },
+    [selectedWordIds],
+  );
 
   const reocr = useMutation({
     mutationFn: () =>
