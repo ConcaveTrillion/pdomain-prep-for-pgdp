@@ -62,7 +62,7 @@ uv run pgdp-prep --reload --frontend-dev http://localhost:5173   # other termina
   integration-shaped tests on synthetic inputs (e.g. `test_process_page.py`'s
   black-on-white round-trip through Step 4).
 
-## Spec questions still open
+## Known spec quirks
 
 - **`compute_prefix` off-by-one:** the spec's loop `range(start, min(idx0, end+1))`
   is empty when `idx0 == start`, so the first frontmatter page resolves to
@@ -70,48 +70,20 @@ uv run pgdp-prep --reload --frontend-dev http://localhost:5173   # other termina
   Implementation matches the spec verbatim; `test_compute_prefix_basic_numbering`
   asserts current `f000` behavior so a future fix is an intentional change.
 
-## Decisions
+## Decisions (locked 2026-05-07 — details in linked specs)
 
-- **Pipeline task-model refactor (2026-05-07):** the granular per-page
-  stage DAG with dirty propagation is the canonical local-mode pipeline
-  shape going forward. Spec: `docs/specs/pipeline-task-model.md`;
-  milestones M1–M6 in `docs/08-roadmap.md` §P0.5. New pipeline work
-  follows that model — do not add new sub-steps inside
-  `core/pipeline/process_page.py`'s monolithic body, and do not add
-  new `JobType.batch_*` values. **All ten open questions Q1–Q10 are
-  locked (2026-05-07)** per the spec's "Open questions — Locked"
-  table.
-- **Pipeline invariants developers must respect:**
-  - **Every-intermediate persistence + dual-write reconciliation
-    (Q3 + Q1-followup):** every stage write is a transaction across
-    the on-disk artifact and the `page_stages` DB row. Best-effort
-    sequence is `write → fsync → atomic rename → DB UPDATE`. Failures
-    mark the row `failed` and propagate dirty downstream. The
-    `pgdp-prep reindex` CLI is the source-of-truth arbiter when DB
-    and disk disagree. Don't write to canonical artifact paths
-    bypassing this contract.
-  - **Splits = sibling pages (Q6):** a split produces N new sibling
-    `Page` rows with `parent_page_id` / `source_crop_bbox` /
-    `split_index` / `split_at_stage`. Each child runs the full
-    per-page DAG independently. Recursive splits are supported.
-    Do not model splits as configuration on `ocr_crop` or any other
-    stage; this was the pre-2026-05-07 model and is gone.
-- **Local-first priority (2026-05-07):** active work targets the local
-  solo / self-hosted-team flow (SQLite + filesystem + CPU). Cloud /
-  remote-mode prerequisites (Postgres adapter live tests, Modal-side
-  S3 wiring, install.sh end-to-end, CI container push) are parked in
-  `docs/08-roadmap.md` "Deferred — remote / cloud mode". Don't pull
-  from that section without an explicit user nudge.
-- `pd-book-tools` is pinned to `v0.9.0` in `pyproject.toml`. Upgrade with
-  `make upgrade-pd-book-tools`.
-- `gpu_backend="cpu"` is the test default. `LocalBackend` is a thin
-  subclass of `CpuBackend` (DocTR/PyTorch auto-pick `cuda:0` when
-  available, so the CPU code path serves GPU users transparently);
-  `ModalBackend` / `SharedContainerBackend` still require real
-  configuration.
-- Data API permissions: every route filters by `user.user_id` so flipping
-  `auth_mode` from `none` → `jwt` makes it multi-user without route changes.
-- `make build` runs `frontend-build` first so the wheel includes the SPA bundle.
+- **Pipeline task-model refactor:** per-page stage DAG + dirty propagation + splits-as-sibling-pages.
+  No new `JobType.batch_*` values; no new sub-steps in `core/pipeline/process_page.py` monolith.
+  Spec: `docs/specs/pipeline-task-model.md`.
+- **Dual-write contract:** every stage write = transaction across on-disk artifact + `page_stages`
+  DB row. `pgdp-prep reindex` is source-of-truth arbiter. Never bypass this path.
+- **Splits = sibling pages:** split produces N new sibling `Page` rows with `parent_page_id` /
+  `source_crop_bbox` / `split_index` / `split_at_stage`. Not config on `ocr_crop`.
+- **Local-first:** active work = SQLite + filesystem + CPU. Cloud/remote items parked in `docs/08-roadmap.md §Deferred`.
+- `pd-book-tools` pinned to `v0.9.0`. Upgrade: `make upgrade-pd-book-tools`.
+- `gpu_backend="cpu"` is the test default. `LocalBackend` subclasses `CpuBackend`; Modal/SharedContainer require real config.
+- `make build` runs `frontend-build` first so the wheel ships with the SPA bundle.
+- Data API: every route filters by `user.user_id`; flipping `auth_mode` `none`→`jwt` is multi-user-safe.
 
 ## Sibling repos
 
