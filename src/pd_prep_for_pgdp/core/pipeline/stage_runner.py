@@ -55,9 +55,11 @@ and the eager dirty cascade that follows on success.
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from time import time
+from typing import Any
 
 import cv2  # type: ignore[import-not-found]
 import numpy as np
@@ -73,6 +75,12 @@ from .page_stage_writer import (
 )
 from .stage_dag import compute_dirty_descendants, get_stage
 from .stage_registry import StageNotImplemented, get_stage_impl
+
+# output_type values that are serialised as JSON rather than PNG.
+_JSON_OUTPUT_TYPES: frozenset[str] = frozenset({"bbox", "page_attrs", "illustration_regions"})
+
+# output_type values that are ndarrays and must be PNG-encoded.
+_IMAGE_OUTPUT_TYPES: frozenset[str] = frozenset({"image", "gray", "binary", "image_bytes"})
 
 log = logging.getLogger(__name__)
 
@@ -149,13 +157,19 @@ async def _load_parent_artifact(
     project_id: str,
     page_id: str,
     parent_stage_id: str,
-) -> np.ndarray:
+) -> Any:
     """Load a parent stage's clean artifact, decoded into the runner's
     canonical in-memory type.
 
-    Slice 3 only handles image parents (PNG / JPG bytes → ndarray). When
-    the runner extends to json/text/bbox parents (later slices), this
-    becomes a dispatch table keyed on `Stage.output_type`.
+    Dispatch is on the parent's `Stage.output_type`:
+
+    - Image types (`image`, `gray`, `binary`, `image_bytes`): PNG/JPEG bytes
+      decoded to numpy.ndarray via cv2.imdecode.
+    - JSON types (`bbox`, `page_attrs`, `illustration_regions`): JSON text
+      file parsed to a Python object (list/dict).
+
+    Other types are returned as raw bytes for now; callers that need
+    special handling should check explicitly.
     """
     path = stage_artifact_path(data_root, project_id, page_id, parent_stage_id)
     if not path.exists():
@@ -165,7 +179,16 @@ async def _load_parent_artifact(
             parent_stage_id,
             [f"{parent_stage_id}: artifact missing at {path}"],
         )
-    return _decode_image_bytes(path.read_bytes())
+
+    parent_stage = get_stage(parent_stage_id)
+    raw = path.read_bytes()
+
+    if parent_stage.output_type in _IMAGE_OUTPUT_TYPES:
+        return _decode_image_bytes(raw)
+    if parent_stage.output_type in _JSON_OUTPUT_TYPES:
+        return json.loads(raw)
+    # Fall back to raw bytes for unknown types; the impl must handle them.
+    return raw
 
 
 async def _cascade_dirty(
@@ -401,10 +424,20 @@ async def run_stage(
             else:
                 output = impl(*parent_artifacts)
 
-            # Step 7: encode + dual-write. (Slice 3 only emits PNGs since the
-            # three real impls all return ndarrays; later slices generalise this
-            # by branching on `Stage.output_type`.)
-            artifact_bytes = _encode_image_to_png(output)
+            # Step 7: encode + dual-write.
+            # Dispatch on the stage's output_type so JSON-typed stages
+            # don't try to PNG-encode their tuple/list results.
+            if stage.output_type in _JSON_OUTPUT_TYPES:
+                # Coerce numpy scalar types (int64, float32, etc.) to native
+                # Python so json.dumps can serialise without a custom encoder.
+                # The output is a tuple/list of numbers for `bbox`, or a dict
+                # for page_attrs / illustration_regions.
+                if isinstance(output, (tuple, list)):
+                    output = [int(v) if hasattr(v, "item") else v for v in output]
+                artifact_bytes = json.dumps(output).encode()
+            else:
+                # All image / gray / binary / image_bytes stages return ndarrays.
+                artifact_bytes = _encode_image_to_png(output)
             committed = await commit_stage_artifact(
                 data_root=data_root,
                 database=database,

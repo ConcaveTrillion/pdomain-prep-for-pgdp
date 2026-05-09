@@ -288,3 +288,147 @@ def test_manual_deskew_pre_cpu_preserves_dimensions_at_default() -> None:
     img = _solid_color_bgr(h=40, w=50)
     out = fn(img)
     assert out.shape == img.shape
+
+
+# ─── Real impl: find_content_edges (Slice 9) ───────────────────────────────
+
+
+def _binary_with_content(h: int = 100, w: int = 100) -> np.ndarray:
+    """Binary image with white pixels in a centre rectangle (simulates text content)."""
+    img = np.zeros((h, w), dtype=np.uint8)
+    img[h // 5 : 4 * h // 5, w // 10 : 9 * w // 10] = 255
+    return img
+
+
+def test_find_content_edges_cpu_returns_four_tuple() -> None:
+    """find_content_edges returns a 4-tuple (minX, maxX, minY, maxY)."""
+    fn = get_stage_impl("find_content_edges", "cpu")
+    out = fn(_binary_with_content())
+    assert isinstance(out, tuple)
+    assert len(out) == 4
+
+
+def test_find_content_edges_cpu_values_within_image_bounds() -> None:
+    """The returned bbox coordinates must be within the image dimensions."""
+    h, w = 100, 120
+    fn = get_stage_impl("find_content_edges", "cpu")
+    minX, maxX, minY, maxY = fn(_binary_with_content(h=h, w=w))
+    assert 0 <= minX <= maxX <= w, f"X range out of bounds: {minX}, {maxX}"
+    assert 0 <= minY <= maxY <= h, f"Y range out of bounds: {minY}, {maxY}"
+
+
+def test_find_content_edges_cpu_finds_content_rect() -> None:
+    """Edges found roughly enclose the white content area (not the whole image)."""
+    fn = get_stage_impl("find_content_edges", "cpu")
+    img = _binary_with_content(h=100, w=100)
+    minX, maxX, minY, maxY = fn(img)
+    # Content is in [10:90, 20:80] → the detected region should be inside
+    # the image bounds and narrower than the full image in at least one dim.
+    assert maxX - minX < 100 or maxY - minY < 100
+
+
+# ─── Real impl: crop_to_content (Slice 10) ─────────────────────────────────
+
+
+def test_crop_to_content_cpu_shrinks_image() -> None:
+    """crop_to_content(image, bbox) crops the image to the bbox region."""
+    fn = get_stage_impl("crop_to_content", "cpu")
+    img = np.zeros((100, 120), dtype=np.uint8)
+    img[20:80, 15:105] = 255
+    # Pass in a tight bbox.
+    out = fn(img, (15, 105, 20, 80))
+    assert isinstance(out, np.ndarray)
+    h, w = out.shape[:2]
+    # The crop should be smaller than the original in at least one dimension.
+    assert h < 100 or w < 120
+
+
+def test_crop_to_content_cpu_returns_ndarray() -> None:
+    """crop_to_content returns a numpy ndarray."""
+    fn = get_stage_impl("crop_to_content", "cpu")
+    img = np.zeros((50, 60), dtype=np.uint8)
+    out = fn(img, (5, 55, 5, 45))
+    assert isinstance(out, np.ndarray)
+
+
+# ─── Real impl: auto_deskew (Slice 10) ─────────────────────────────────────
+
+
+def test_auto_deskew_cpu_returns_ndarray() -> None:
+    """auto_deskew returns a numpy ndarray (not a tuple)."""
+    fn = get_stage_impl("auto_deskew", "cpu")
+    img = _binary_with_content()
+    out = fn(img)
+    assert isinstance(out, np.ndarray)
+
+
+def test_auto_deskew_cpu_shape_reasonable() -> None:
+    """auto_deskew output has positive dimensions."""
+    fn = get_stage_impl("auto_deskew", "cpu")
+    img = _binary_with_content(h=80, w=100)
+    out = fn(img)
+    h, w = out.shape[:2]
+    assert h > 0 and w > 0
+
+
+# ─── Real impl: morph_fill (Slice 10) ──────────────────────────────────────
+
+
+def test_morph_fill_cpu_returns_ndarray() -> None:
+    """morph_fill returns a numpy ndarray."""
+    fn = get_stage_impl("morph_fill", "cpu")
+    img = _binary_with_content()
+    out = fn(img)
+    assert isinstance(out, np.ndarray)
+
+
+def test_morph_fill_cpu_preserves_dtype() -> None:
+    """morph_fill preserves the uint8 dtype."""
+    fn = get_stage_impl("morph_fill", "cpu")
+    img = _binary_with_content()
+    out = fn(img)
+    assert out.dtype == np.uint8
+
+
+# ─── Real impl: rescale (Slice 11) ─────────────────────────────────────────
+
+
+def test_rescale_cpu_returns_ndarray() -> None:
+    """rescale returns a numpy ndarray."""
+    fn = get_stage_impl("rescale", "cpu")
+    img = _binary_with_content()
+    out = fn(img)
+    assert isinstance(out, np.ndarray)
+
+
+def test_rescale_cpu_targets_canonical_short_side() -> None:
+    """rescale produces an image whose short side is ~1000px (canonical target)."""
+    fn = get_stage_impl("rescale", "cpu")
+    img = _binary_with_content(h=80, w=60)
+    out = fn(img)
+    h, w = out.shape[:2]
+    short = min(h, w)
+    assert short >= 900, f"rescale short side too small: {short}"
+
+
+# ─── Real impl: canvas_map (Slice 11) ──────────────────────────────────────
+
+
+def test_canvas_map_cpu_returns_ndarray() -> None:
+    """canvas_map returns a numpy ndarray."""
+    fn = get_stage_impl("canvas_map", "cpu")
+    # canvas_map expects a re-inverted rescaled image (output of `rescale`).
+    img = np.full((1000, 600), 200, dtype=np.uint8)
+    out = fn(img)
+    assert isinstance(out, np.ndarray)
+
+
+def test_canvas_map_cpu_produces_canonical_aspect_ratio() -> None:
+    """canvas_map places content onto a canvas with the canonical 1.65 h/w ratio."""
+    fn = get_stage_impl("canvas_map", "cpu")
+    img = np.full((1000, 600), 200, dtype=np.uint8)
+    out = fn(img)
+    h, w = out.shape[:2]
+    ratio = h / w
+    # Default h/w ratio is 1.65; allow ±20% for canvas padding.
+    assert 1.0 <= ratio <= 2.5, f"unexpected canvas aspect ratio h/w={ratio:.2f}"

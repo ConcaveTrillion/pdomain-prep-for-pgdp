@@ -296,17 +296,17 @@ async def test_run_stage_handles_stage_not_implemented(
     with a "not yet implemented in registry" message, not the generic engine
     error."""
     project_id, page_id = "p1", "0000"
-    # `find_content_edges` is a registry placeholder at this iteration
+    # `thumbnail` is a registry placeholder at this iteration
     # (no real impl yet — still a closure-bound StageNotImplemented stub).
-    # Seed its only dep (`invert`) clean so the parent-loader doesn't fail
-    # before the registry is consulted.
+    # Its parent is `ingest_source` (output_type='image_bytes'), which can
+    # be seeded via commit_stage_artifact so the dep-check passes.
     payload = _checkerboard_bgr_png()
     await _seed_clean_parents(
         db,
         tmp_path,
         project_id,
         page_id,
-        parent_stages=["invert"],
+        parent_stages=["ingest_source"],
         payload=payload,
     )
 
@@ -316,12 +316,12 @@ async def test_run_stage_handles_stage_not_implemented(
             database=db,
             project_id=project_id,
             page_id=page_id,
-            stage_id="find_content_edges",
+            stage_id="thumbnail",
         )
     # Either the wrapper or the persisted error_message must surface the
     # registry's placeholder wording (substring match — exact phrase tracks
     # `_make_placeholder` in stage_registry.py) so the chip rail can explain.
-    persisted = (await db.get_page_stage(project_id, page_id, "find_content_edges")).error_message
+    persisted = (await db.get_page_stage(project_id, page_id, "thumbnail")).error_message
     assert "no implementation registered" in str(exc_info.value).lower() or (
         persisted is not None and "no implementation registered" in persisted.lower()
     )
@@ -505,6 +505,354 @@ async def test_run_stage_full_chain_to_invert_no_manual_seeding(
         )
         assert state.status == PageStageStatus.clean, (
             f"stage {stage_id!r} did not reach clean; got {state.status!r} (error={state.error_message!r})"
+        )
+        artifact_path = stage_artifact_path(tmp_path, project_id, page_id, stage_id)
+        assert artifact_path.exists(), f"stage {stage_id!r} produced no artifact on disk"
+
+
+# ─── Slice 9: find_content_edges + bbox parent loading ─────────────────────
+
+
+def _binary_png_with_content() -> bytes:
+    """A 100x100 binary image with white pixels in the centre (content area)."""
+    img = np.zeros((100, 100), dtype=np.uint8)
+    img[20:80, 10:90] = 255
+    ok, buf = cv2.imencode(".png", img)
+    assert ok
+    return bytes(buf.tobytes())
+
+
+@pytest.mark.asyncio
+async def test_run_stage_find_content_edges_produces_json_artifact(
+    tmp_path: Path,
+    db: SqliteDatabase,
+) -> None:
+    """`find_content_edges` runs and emits a bbox JSON artifact on disk.
+
+    Slice 9 adds a real `find_content_edges` impl to the registry and
+    extends the runner to handle `bbox`-typed output (serialised as JSON).
+    After a successful run the artifact must be a JSON file containing a
+    4-element list [minX, maxX, minY, maxY].
+    """
+    import json
+
+    project_id, page_id = "p1", "0000"
+    payload = _binary_png_with_content()
+    await _seed_clean_parents(db, tmp_path, project_id, page_id, parent_stages=["invert"], payload=payload)
+
+    state = await run_stage(
+        data_root=tmp_path,
+        database=db,
+        project_id=project_id,
+        page_id=page_id,
+        stage_id="find_content_edges",
+    )
+
+    assert state.status == PageStageStatus.clean, f"error: {state.error_message!r}"
+
+    artifact_path = stage_artifact_path(tmp_path, project_id, page_id, "find_content_edges")
+    assert artifact_path.exists()
+    data = json.loads(artifact_path.read_text())
+    # Should be a 4-element list of numerics: [minX, maxX, minY, maxY].
+    assert isinstance(data, list)
+    assert len(data) == 4, f"expected [minX, maxX, minY, maxY], got {data!r}"
+    assert all(isinstance(v, (int, float)) for v in data)
+
+
+@pytest.mark.asyncio
+async def test_run_stage_find_content_edges_cascade_reaches_crop_to_content(
+    tmp_path: Path,
+    db: SqliteDatabase,
+) -> None:
+    """Re-running `find_content_edges` after `crop_to_content` is clean must
+    dirty `crop_to_content` (Q2 cascade, multi-parent edge)."""
+    import json
+
+    project_id, page_id = "p1", "0000"
+    payload = _binary_png_with_content()
+    bbox_bytes = json.dumps([10, 90, 20, 80]).encode()
+    await _seed_clean_parents(
+        db,
+        tmp_path,
+        project_id,
+        page_id,
+        parent_stages=["invert", "find_content_edges", "crop_to_content"],
+        payload=payload,
+    )
+    # Override find_content_edges artifact with valid JSON (default seed wrote PNG bytes).
+    fce_path = stage_artifact_path(tmp_path, project_id, page_id, "find_content_edges")
+    fce_path.write_bytes(bbox_bytes)
+
+    await run_stage(
+        data_root=tmp_path,
+        database=db,
+        project_id=project_id,
+        page_id=page_id,
+        stage_id="find_content_edges",
+    )
+
+    crop_row = await db.get_page_stage(project_id, page_id, "crop_to_content")
+    assert crop_row is not None
+    assert crop_row.status == PageStageStatus.dirty
+
+
+# ─── Slice 10: crop_to_content, auto_deskew, morph_fill ────────────────────
+
+
+@pytest.mark.asyncio
+async def test_run_stage_crop_to_content_multi_parent(
+    tmp_path: Path,
+    db: SqliteDatabase,
+) -> None:
+    """`crop_to_content` loads two parent artifacts: `invert` (binary image)
+    and `find_content_edges` (bbox JSON). The runner must handle the mixed
+    parent types — decode the image from the first parent and parse JSON from
+    the second — then call the impl with (image, bbox).
+
+    After a successful run the artifact must be a PNG with smaller dimensions
+    than the original (the crop should shrink the image).
+    """
+    import json
+
+    project_id, page_id = "p1", "0000"
+
+    # Build a 100x100 binary image with content in a known sub-rect.
+    img = np.zeros((100, 100), dtype=np.uint8)
+    img[20:80, 10:90] = 255
+    ok, buf = cv2.imencode(".png", img)
+    assert ok
+    binary_payload = bytes(buf.tobytes())
+
+    # Seed `invert` with the binary PNG.
+    await db.init_page_stages_for_page(project_id, page_id)
+    await commit_stage_artifact(
+        data_root=tmp_path,
+        database=db,
+        project_id=project_id,
+        page_id=page_id,
+        stage_id="invert",
+        artifact_bytes=binary_payload,
+    )
+
+    # Seed `find_content_edges` with JSON bbox matching the content rect.
+    # minX, maxX, minY, maxY — values from find_edges on the above image.
+    bbox = [10, 89, 20, 79]
+    fce_artifact = json.dumps(bbox).encode()
+    await commit_stage_artifact(
+        data_root=tmp_path,
+        database=db,
+        project_id=project_id,
+        page_id=page_id,
+        stage_id="find_content_edges",
+        artifact_bytes=fce_artifact,
+    )
+
+    state = await run_stage(
+        data_root=tmp_path,
+        database=db,
+        project_id=project_id,
+        page_id=page_id,
+        stage_id="crop_to_content",
+    )
+
+    assert state.status == PageStageStatus.clean, f"error: {state.error_message!r}"
+    artifact_path = stage_artifact_path(tmp_path, project_id, page_id, "crop_to_content")
+    assert artifact_path.exists()
+    # Cropped image must be smaller than the original.
+    cropped = cv2.imdecode(np.frombuffer(artifact_path.read_bytes(), np.uint8), cv2.IMREAD_UNCHANGED)
+    assert cropped is not None
+    h, w = cropped.shape[:2]
+    assert h < 100 or w < 100, f"crop_to_content produced same-size image: {h}x{w}"
+
+
+@pytest.mark.asyncio
+async def test_run_stage_auto_deskew_runs_after_crop_to_content(
+    tmp_path: Path,
+    db: SqliteDatabase,
+) -> None:
+    """`auto_deskew` runs on the output of `crop_to_content` and produces a PNG."""
+    project_id, page_id = "p1", "0000"
+    img = np.zeros((60, 80), dtype=np.uint8)
+    img[10:50, 10:70] = 255
+    ok, buf = cv2.imencode(".png", img)
+    assert ok
+    payload = bytes(buf.tobytes())
+    await _seed_clean_parents(
+        db, tmp_path, project_id, page_id, parent_stages=["crop_to_content"], payload=payload
+    )
+
+    state = await run_stage(
+        data_root=tmp_path,
+        database=db,
+        project_id=project_id,
+        page_id=page_id,
+        stage_id="auto_deskew",
+    )
+
+    assert state.status == PageStageStatus.clean, f"error: {state.error_message!r}"
+    artifact_path = stage_artifact_path(tmp_path, project_id, page_id, "auto_deskew")
+    assert artifact_path.exists()
+    arr = cv2.imdecode(np.frombuffer(artifact_path.read_bytes(), np.uint8), cv2.IMREAD_UNCHANGED)
+    assert arr is not None
+
+
+@pytest.mark.asyncio
+async def test_run_stage_morph_fill_runs_after_auto_deskew(
+    tmp_path: Path,
+    db: SqliteDatabase,
+) -> None:
+    """`morph_fill` runs on the output of `auto_deskew` and produces a PNG."""
+    project_id, page_id = "p1", "0000"
+    img = np.zeros((60, 80), dtype=np.uint8)
+    img[10:50, 10:70] = 255
+    ok, buf = cv2.imencode(".png", img)
+    assert ok
+    payload = bytes(buf.tobytes())
+    await _seed_clean_parents(
+        db, tmp_path, project_id, page_id, parent_stages=["auto_deskew"], payload=payload
+    )
+
+    state = await run_stage(
+        data_root=tmp_path,
+        database=db,
+        project_id=project_id,
+        page_id=page_id,
+        stage_id="morph_fill",
+    )
+
+    assert state.status == PageStageStatus.clean, f"error: {state.error_message!r}"
+    artifact_path = stage_artifact_path(tmp_path, project_id, page_id, "morph_fill")
+    assert artifact_path.exists()
+    arr = cv2.imdecode(np.frombuffer(artifact_path.read_bytes(), np.uint8), cv2.IMREAD_UNCHANGED)
+    assert arr is not None
+
+
+# ─── Slice 11: rescale + canvas_map ─────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_run_stage_rescale_runs_after_morph_fill(
+    tmp_path: Path,
+    db: SqliteDatabase,
+) -> None:
+    """`rescale` runs on the output of `morph_fill` and produces a PNG.
+
+    rescale re-inverts before scaling (4m in process_page_cpu) and outputs
+    a grayscale (inverted) image — output_type='image' but single-channel.
+    """
+    project_id, page_id = "p1", "0000"
+    img = np.zeros((60, 80), dtype=np.uint8)
+    img[10:50, 10:70] = 255
+    ok, buf = cv2.imencode(".png", img)
+    assert ok
+    payload = bytes(buf.tobytes())
+    await _seed_clean_parents(
+        db, tmp_path, project_id, page_id, parent_stages=["morph_fill"], payload=payload
+    )
+
+    state = await run_stage(
+        data_root=tmp_path,
+        database=db,
+        project_id=project_id,
+        page_id=page_id,
+        stage_id="rescale",
+    )
+
+    assert state.status == PageStageStatus.clean, f"error: {state.error_message!r}"
+    artifact_path = stage_artifact_path(tmp_path, project_id, page_id, "rescale")
+    assert artifact_path.exists()
+    arr = cv2.imdecode(np.frombuffer(artifact_path.read_bytes(), np.uint8), cv2.IMREAD_UNCHANGED)
+    assert arr is not None
+
+
+@pytest.mark.asyncio
+async def test_run_stage_canvas_map_runs_after_rescale(
+    tmp_path: Path,
+    db: SqliteDatabase,
+) -> None:
+    """`canvas_map` runs on the output of `rescale` and produces a PNG artifact.
+
+    canvas_map outputs image_bytes (output_type='image_bytes'), so the runner
+    must encode the ndarray result to PNG and write it canonically.
+    """
+    project_id, page_id = "p1", "0000"
+    # Build a realistic-ish rescaled image: tall and narrow (post-rescale shape).
+    img = np.full((200, 120), 200, dtype=np.uint8)
+    ok, buf = cv2.imencode(".png", img)
+    assert ok
+    payload = bytes(buf.tobytes())
+    await _seed_clean_parents(db, tmp_path, project_id, page_id, parent_stages=["rescale"], payload=payload)
+
+    state = await run_stage(
+        data_root=tmp_path,
+        database=db,
+        project_id=project_id,
+        page_id=page_id,
+        stage_id="canvas_map",
+    )
+
+    assert state.status == PageStageStatus.clean, f"error: {state.error_message!r}"
+    artifact_path = stage_artifact_path(tmp_path, project_id, page_id, "canvas_map")
+    assert artifact_path.exists()
+    arr = cv2.imdecode(np.frombuffer(artifact_path.read_bytes(), np.uint8), cv2.IMREAD_UNCHANGED)
+    assert arr is not None
+
+
+@pytest.mark.asyncio
+async def test_run_stage_full_chain_through_canvas_map(
+    tmp_path: Path,
+    db: SqliteDatabase,
+) -> None:
+    """End-to-end chain: ingest_source → canvas_map in topo order.
+
+    Slices 9-11 complete the proofing chain. Starting from a fresh page
+    (no rows seeded), clicking every stage in topo order must produce a
+    clean artifact at every step. `find_content_edges` produces a JSON
+    artifact; `crop_to_content` reads both image and JSON parents.
+    """
+    from pd_prep_for_pgdp.adapters.storage.filesystem import FilesystemStorage
+
+    project_id, page_id = "p1", "0000"
+    storage = FilesystemStorage(tmp_path)
+
+    # Build a real-looking source image (tall text-page-like content).
+    src_img = np.full((400, 250, 3), 240, dtype=np.uint8)
+    # Add some 'text-like' dark content.
+    src_img[50:350, 30:220] = 30
+    ok, buf = cv2.imencode(".png", src_img)
+    assert ok
+    source_bytes = bytes(buf.tobytes())
+    source_key = f"projects/{project_id}/source/page0.png"
+    await storage.put_bytes(source_key, source_bytes, "image/png")
+    await db.init_page_stages_for_page(project_id, page_id)
+
+    chain = [
+        "ingest_source",
+        "decode_source",
+        "initial_crop",
+        "manual_deskew_pre",
+        "grayscale",
+        "threshold",
+        "invert",
+        "find_content_edges",
+        "crop_to_content",
+        "auto_deskew",
+        "morph_fill",
+        "rescale",
+        "canvas_map",
+    ]
+    for stage_id in chain:
+        state = await run_stage(
+            data_root=tmp_path,
+            database=db,
+            project_id=project_id,
+            page_id=page_id,
+            stage_id=stage_id,
+            storage=storage,
+            page_source_key=source_key,
+        )
+        assert state.status == PageStageStatus.clean, (
+            f"stage {stage_id!r} failed; error={state.error_message!r}"
         )
         artifact_path = stage_artifact_path(tmp_path, project_id, page_id, stage_id)
         assert artifact_path.exists(), f"stage {stage_id!r} produced no artifact on disk"

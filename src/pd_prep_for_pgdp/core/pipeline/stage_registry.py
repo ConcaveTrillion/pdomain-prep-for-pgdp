@@ -201,6 +201,129 @@ def _manual_deskew_pre_cpu(image: Any) -> Any:
     return image
 
 
+# ─── Real implementations: post-invert chain (Slice 9–11) ───────────────────
+#
+# `find_content_edges` returns a bbox tuple (4 ints), not an ndarray.
+# The runner handles this by branching on `Stage.output_type == 'bbox'`:
+# it JSON-encodes the tuple and writes it as `output.json`.
+#
+# `crop_to_content` has two parents: an image (binary ndarray) and a bbox
+# (4-tuple loaded from the JSON artifact). The runner passes both in the
+# order declared in `Stage.depends_on`: (invert_image, bbox).
+#
+# `auto_deskew`, `morph_fill`, `rescale`, `canvas_map` are single-parent
+# image→image transforms that carve out the remainder of the 4i–4n chain.
+
+
+def _find_content_edges_cpu(image: Any) -> tuple[int, int, int, int]:
+    """Find the bounding box of the content region in a binary inverted image.
+
+    Returns (minX, maxX, minY, maxY) — the four edge coordinates passed to
+    `crop_to_rectangle` in step 4j. Wraps `find_edges` from pd_book_tools
+    using the same default parameters as `process_page_cpu` (4i).
+
+    The runner encodes this as a JSON list and writes it to `output.json`.
+    """
+    from pd_book_tools.image_processing.cv2_processing import (  # type: ignore[import-not-found]
+        find_edges,
+    )
+
+    return find_edges(image)
+
+
+def _crop_to_content_cpu(image: Any, bbox: tuple[int, int, int, int]) -> Any:
+    """Crop the binary image to the content bounding box (step 4j).
+
+    `image` is the inverted binary ndarray (from `invert`);
+    `bbox` is (minX, maxX, minY, maxY) from `find_content_edges`.
+
+    Wraps `crop_to_rectangle`. The optional whitespace-pad step in
+    `process_page_cpu` 4j fires only when `cfg.white_space_additional`
+    is set — at default config (no override) it is skipped.
+    ResolvedPageConfig plumbing into the runner lands later; this
+    iteration always takes the no-pad branch.
+    """
+    from pd_book_tools.image_processing.cv2_processing import (  # type: ignore[import-not-found]
+        crop_to_rectangle,
+    )
+
+    minX, maxX, minY, maxY = bbox
+    return crop_to_rectangle(image, minX, maxX, minY, maxY)
+
+
+def _auto_deskew_cpu(image: Any) -> Any:
+    """Auto-deskew the binary content image (step 4k).
+
+    Mirrors `process_page_cpu`'s 4k branch for the common case
+    (no manual override, non-special alignment, standard orientation).
+    ResolvedPageConfig skip conditions land when config plumbing is wired;
+    for now, always attempt auto-deskew via `auto_deskew(pct=0.30)`.
+    """
+    from pd_book_tools.image_processing.cv2_processing import (  # type: ignore[import-not-found]
+        auto_deskew,
+    )
+
+    out = auto_deskew(image, pct=0.30)
+    # `auto_deskew` may return either a bare ndarray or a (ndarray, angle) tuple.
+    return out[0] if isinstance(out, tuple) else out
+
+
+def _morph_fill_cpu(image: Any) -> Any:
+    """Apply morphological fill to close small gaps in text strokes (step 4l).
+
+    Optional in `process_page_cpu` via `cfg.do_morph`; default is False,
+    but wiring the impl now means the stage can run harmlessly via morph_fill
+    at its default call — pd_book_tools' `morph_fill` is idempotent on
+    already-clean binary images. ResolvedPageConfig plumbing will expose
+    the do_morph toggle; until then the impl always runs.
+    """
+    from pd_book_tools.image_processing.cv2_processing import (  # type: ignore[import-not-found]
+        morph_fill,
+    )
+
+    return morph_fill(image)
+
+
+def _rescale_cpu(image: Any) -> Any:
+    """Re-invert + rescale to canonical aspect ratio (step 4m).
+
+    `process_page_cpu` calls `rescale_image(invert_image(img_deskewed), target_short_side=1000)`.
+    The inversion here is intentional: `morph_fill` outputs a binary image with
+    text=255/bg=0; `rescale_image` expects text=0/bg=255 (white-on-black).
+    The inversion restores that convention before scaling.
+    """
+    from pd_book_tools.image_processing.cv2_processing import (  # type: ignore[import-not-found]
+        invert_image,
+        rescale_image,
+    )
+
+    return rescale_image(invert_image(image), target_short_side=1000)
+
+
+def _canvas_map_cpu(image: Any) -> Any:
+    """Map the rescaled image onto a canonical canvas (step 4n).
+
+    Wraps `map_content_onto_scaled_canvas` with the default alignment
+    (Alignment.DEFAULT) and the canonical h/w ratio used in `process_page_cpu`.
+    ResolvedPageConfig plumbing (alignment override, page_h_w_ratio from
+    per-page config) lands when the runner passes cfg into impls; for now,
+    DEFAULT alignment and ratio=1.294 (US Letter ~8.5:11) are the documented
+    defaults and the ones the M2/Slice-11 smoke-test exercises.
+
+    Returns an ndarray; the runner encodes it to PNG (output_type='image_bytes').
+    """
+    from pd_book_tools.image_processing.cv2_processing import (  # type: ignore[import-not-found]
+        Alignment,
+        map_content_onto_scaled_canvas,
+    )
+
+    return map_content_onto_scaled_canvas(
+        image,
+        force_align=Alignment.DEFAULT,
+        height_width_ratio=1.294,
+    )
+
+
 # ─── Registry assembly ──────────────────────────────────────────────────────
 
 # Real implementations registered for cpu. Keys must be in `PAGE_STAGE_IDS`.
@@ -212,6 +335,13 @@ _REAL_CPU_IMPLS: dict[str, Callable[..., Any]] = {
     "grayscale": _grayscale_cpu,
     "threshold": _threshold_cpu,
     "invert": _invert_cpu,
+    # Slice 9–11: post-invert proofing chain through canvas_map.
+    "find_content_edges": _find_content_edges_cpu,
+    "crop_to_content": _crop_to_content_cpu,
+    "auto_deskew": _auto_deskew_cpu,
+    "morph_fill": _morph_fill_cpu,
+    "rescale": _rescale_cpu,
+    "canvas_map": _canvas_map_cpu,
 }
 
 
