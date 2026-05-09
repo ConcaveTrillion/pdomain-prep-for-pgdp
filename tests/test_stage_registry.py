@@ -514,3 +514,23 @@ def test_blank_proof_synth_cpu_aspect_ratio_matches_attrs() -> None:
     h, w = out.shape[:2]
     actual_ratio = h / w
     assert abs(actual_ratio - h_w) < 0.2, f"aspect ratio {actual_ratio:.2f} vs expected {h_w}"
+
+
+# ─── Real impl: ocr_crop (Slice 13) ────────────────────────────────────────
+
+
+def test_ocr_crop_cpu_passes_through_at_default_config() -> None:
+    """ocr_crop is a pass-through at default config (no margin, no splits)."""
+    fn = get_stage_impl("ocr_crop", "cpu")
+    img = np.full((200, 120), 180, dtype=np.uint8)
+    out = fn(img)
+    assert isinstance(out, np.ndarray)
+    assert np.array_equal(out, img)
+
+
+def test_ocr_crop_cpu_preserves_dimensions() -> None:
+    """ocr_crop at default config preserves height and width."""
+    fn = get_stage_impl("ocr_crop", "cpu")
+    img = np.full((300, 200), 100, dtype=np.uint8)
+    out = fn(img)
+    assert out.shape == img.shape

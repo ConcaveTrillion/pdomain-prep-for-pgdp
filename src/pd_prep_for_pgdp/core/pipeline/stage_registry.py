@@ -407,6 +407,37 @@ def _blank_proof_synth_cpu(page_attrs: dict[str, Any]) -> Any:
     return np.full((height, width), 255, dtype=np.uint8)
 
 
+# ─── Real implementations: ocr_crop (M2 Slice 13) ───────────────────────────
+#
+# `ocr_crop` reads the proofing image (from either `canvas_map` or
+# `blank_proof_synth`) and applies the uniform OCR crop margin and any
+# configured page splits. The runner passes the proofing artifact as an
+# ndarray (decoded from the image_bytes parent).
+#
+# At default config (no ocr_crop margin, no splits), `ocr_crop` is a
+# pass-through: the ndarray is returned unchanged. The runner PNG-encodes
+# the result (output_type='image_bytes').
+#
+# ResolvedPageConfig plumbing (actual `cfg.ocr_crop` values and per-page
+# splits for sibling-page crops) lands when the runner wires cfg into
+# stage impls (M3). Until then the impl always takes the no-crop branch.
+
+
+def _ocr_crop_cpu(image: Any) -> Any:
+    """Apply the OCR-crop margin and page-split logic to the proofing image.
+
+    At default config (`cfg.ocr_crop == (0,0,0,0)`, no splits) this is a
+    pass-through — the proofing ndarray is forwarded unchanged. The runner
+    PNG-encodes the result (output_type='image_bytes').
+
+    The full `crop_for_ocr` function (which handles `cfg.ocr_crop` trims
+    and `page.splits` into multiple crops) is the M3 target; this iteration
+    only wires the no-config default so the chain is runnable end-to-end
+    from `ingest_source` through `ocr_crop`.
+    """
+    return image
+
+
 # ─── Registry assembly ──────────────────────────────────────────────────────
 
 # Real implementations registered for cpu. Keys must be in `PAGE_STAGE_IDS`.
@@ -428,6 +459,8 @@ _REAL_CPU_IMPLS: dict[str, Callable[..., Any]] = {
     # Slice 12: blank-page branch.
     "auto_detect_attrs": _auto_detect_attrs_cpu,
     "blank_proof_synth": _blank_proof_synth_cpu,
+    # Slice 13: ocr_crop.
+    "ocr_crop": _ocr_crop_cpu,
 }
 
 

@@ -883,6 +883,94 @@ async def test_run_stage_blank_proof_synth_produces_png_artifact(
     assert arr is not None, "blank_proof_synth artifact is not a valid PNG"
 
 
+# ─── Slice 13: ocr_crop + any_parent_ok ────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_run_stage_ocr_crop_from_canvas_map(
+    tmp_path: Path,
+    db: SqliteDatabase,
+) -> None:
+    """`ocr_crop` can run when only `canvas_map` is clean (normal page path).
+
+    `ocr_crop` has `any_parent_ok=True`; only `canvas_map` OR
+    `blank_proof_synth` needs to be clean. This test verifies the
+    canvas_map-is-clean branch.
+    """
+    project_id, page_id = "p1", "0000"
+    img = np.full((200, 120), 200, dtype=np.uint8)
+    ok, buf = cv2.imencode(".png", img)
+    assert ok
+    payload = bytes(buf.tobytes())
+
+    # Seed only canvas_map as clean (blank_proof_synth stays not-run).
+    await _seed_clean_parents(
+        db, tmp_path, project_id, page_id, parent_stages=["canvas_map"], payload=payload
+    )
+
+    state = await run_stage(
+        data_root=tmp_path,
+        database=db,
+        project_id=project_id,
+        page_id=page_id,
+        stage_id="ocr_crop",
+    )
+
+    assert state.status == PageStageStatus.clean, f"error: {state.error_message!r}"
+    artifact_path = stage_artifact_path(tmp_path, project_id, page_id, "ocr_crop")
+    assert artifact_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_run_stage_ocr_crop_from_blank_proof_synth(
+    tmp_path: Path,
+    db: SqliteDatabase,
+) -> None:
+    """`ocr_crop` can run when only `blank_proof_synth` is clean (blank page path).
+
+    Verifies the blank_proof_synth-is-clean branch of any_parent_ok.
+    """
+    project_id, page_id = "p1", "0000"
+    img = np.full((200, 120), 255, dtype=np.uint8)
+    ok, buf = cv2.imencode(".png", img)
+    assert ok
+    payload = bytes(buf.tobytes())
+
+    # Seed only blank_proof_synth as clean (canvas_map stays not-run).
+    await _seed_clean_parents(
+        db, tmp_path, project_id, page_id, parent_stages=["blank_proof_synth"], payload=payload
+    )
+
+    state = await run_stage(
+        data_root=tmp_path,
+        database=db,
+        project_id=project_id,
+        page_id=page_id,
+        stage_id="ocr_crop",
+    )
+
+    assert state.status == PageStageStatus.clean, f"error: {state.error_message!r}"
+
+
+@pytest.mark.asyncio
+async def test_run_stage_ocr_crop_dep_check_fails_when_no_parent_clean(
+    tmp_path: Path,
+    db: SqliteDatabase,
+) -> None:
+    """`ocr_crop` raises StageDependenciesNotMet when neither parent is clean."""
+    project_id, page_id = "p1", "0000"
+    await db.init_page_stages_for_page(project_id, page_id)
+
+    with pytest.raises(StageDependenciesNotMet):
+        await run_stage(
+            data_root=tmp_path,
+            database=db,
+            project_id=project_id,
+            page_id=page_id,
+            stage_id="ocr_crop",
+        )
+
+
 @pytest.mark.asyncio
 async def test_run_stage_full_chain_through_canvas_map(
     tmp_path: Path,

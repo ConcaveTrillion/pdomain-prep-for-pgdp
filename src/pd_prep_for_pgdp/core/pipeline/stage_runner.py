@@ -344,14 +344,31 @@ async def run_stage(
     if stage.depends_on:
         rows = await database.list_page_stages_for_page(project_id, page_id)
         rows_by_stage = {r.stage_id: r for r in rows}
-        missing = [
-            parent_id
-            for parent_id in stage.depends_on
-            if (rows_by_stage.get(parent_id) is None)
-            or (rows_by_stage[parent_id].status != PageStageStatus.clean)
-        ]
-        if missing:
-            raise StageDependenciesNotMet(stage_id, missing)
+
+        if stage.any_parent_ok:
+            # At least one parent must be clean (e.g. ocr_crop's alternative
+            # producers: canvas_map for normal pages, blank_proof_synth for
+            # blank pages). If none are clean, report all as missing.
+            has_clean_parent = any(
+                rows_by_stage.get(parent_id) is not None
+                and rows_by_stage[parent_id].status == PageStageStatus.clean
+                for parent_id in stage.depends_on
+            )
+            if not has_clean_parent:
+                raise StageDependenciesNotMet(
+                    stage_id,
+                    list(stage.depends_on),
+                )
+        else:
+            # All parents must be clean (standard multi-parent dep check).
+            missing = [
+                parent_id
+                for parent_id in stage.depends_on
+                if (rows_by_stage.get(parent_id) is None)
+                or (rows_by_stage[parent_id].status != PageStageStatus.clean)
+            ]
+            if missing:
+                raise StageDependenciesNotMet(stage_id, missing)
 
     # Step 3: mark running so the UI / GET endpoint sees the transition.
     await _mark_running(
@@ -402,22 +419,49 @@ async def run_stage(
                 artifact_bytes=bytes(artifact_bytes),
             )
         else:
-            # Load parents. Single-parent stages pass the bare ndarray; multi-parent
-            # stages pass a tuple in the `Stage.depends_on` order (Slice 3 only
-            # exercises grayscale/threshold/invert which are all single-parent —
-            # the multi-parent dispatch path lands when `crop_to_content` etc.
-            # get real impls).
-            parent_artifacts: list[np.ndarray] = []
-            for parent_id in stage.depends_on:
+            # Load parents.
+            # - any_parent_ok stages (e.g. ocr_crop): load only the first clean
+            #   parent in depends_on order (whichever branch ran for this page).
+            # - Standard stages: load all parents. Single-parent passes the bare
+            #   artifact; multi-parent passes positional args in depends_on order.
+            parent_artifacts: list[Any] = []
+
+            if stage.any_parent_ok:
+                # Find the first clean parent and load only that one.
+                rows_snapshot = await database.list_page_stages_for_page(project_id, page_id)
+                rows_by_stage_snapshot = {r.stage_id: r for r in rows_snapshot}
+                chosen_parent: str | None = next(
+                    (
+                        pid
+                        for pid in stage.depends_on
+                        if rows_by_stage_snapshot.get(pid) is not None
+                        and rows_by_stage_snapshot[pid].status == PageStageStatus.clean
+                    ),
+                    None,
+                )
+                if chosen_parent is None:
+                    # Should not happen — dep-check passed — but guard anyway.
+                    raise StageDependenciesNotMet(stage_id, list(stage.depends_on))
                 parent_artifacts.append(
                     await _load_parent_artifact(
                         data_root=data_root,
                         database=database,
                         project_id=project_id,
                         page_id=page_id,
-                        parent_stage_id=parent_id,
+                        parent_stage_id=chosen_parent,
                     )
                 )
+            else:
+                for parent_id in stage.depends_on:
+                    parent_artifacts.append(
+                        await _load_parent_artifact(
+                            data_root=data_root,
+                            database=database,
+                            project_id=project_id,
+                            page_id=page_id,
+                            parent_stage_id=parent_id,
+                        )
+                    )
 
             if len(parent_artifacts) == 1:
                 output = impl(parent_artifacts[0])
@@ -425,8 +469,8 @@ async def run_stage(
                 output = impl(*parent_artifacts)
 
             # Step 7: encode + dual-write.
-            # Dispatch on the stage's output_type so JSON-typed stages
-            # don't try to PNG-encode their tuple/list results.
+            # Dispatch on the stage's output_type so non-image stages
+            # don't try to PNG-encode their results.
             if stage.output_type in _JSON_OUTPUT_TYPES:
                 # Coerce numpy scalar types (int64, float32, etc.) to native
                 # Python so json.dumps can serialise without a custom encoder.
@@ -435,6 +479,16 @@ async def run_stage(
                 if isinstance(output, (tuple, list)):
                     output = [int(v) if hasattr(v, "item") else v for v in output]
                 artifact_bytes = json.dumps(output).encode()
+            elif stage.output_type == "text":
+                # text_postprocess and text_review return a str; encode to UTF-8.
+                if isinstance(output, str):
+                    artifact_bytes = output.encode()
+                else:
+                    artifact_bytes = bytes(output)
+            elif stage.output_type in ("jpeg_bytes",) or isinstance(output, (bytes, bytearray)):
+                # Impls that already return bytes (thumbnail, ocr_crop whole-page,
+                # canvas_map when implemented as bytes-in/bytes-out). Write verbatim.
+                artifact_bytes = bytes(output)
             else:
                 # All image / gray / binary / image_bytes stages return ndarrays.
                 artifact_bytes = _encode_image_to_png(output)
