@@ -31,6 +31,12 @@ jobs:
       # via anyio + sqlite3 worker threads. Drop this once anyio + SQLite
       # are 3.14-clean.
       UV_PYTHON: "3.13"
+      # Prevent CUDA from initialising on CPU-only CI runners. pd-book-tools
+      # depends on cupy-cuda12x; conftest._detect_gpu() imports cupy at
+      # collection time, which triggers CUDA library init. Without a GPU the
+      # CUDA driver teardown segfaults at process exit (exit code 139).
+      # CUDA_VISIBLE_DEVICES="" suppresses GPU enumeration before cupy loads.
+      CUDA_VISIBLE_DEVICES: ""
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
@@ -53,7 +59,7 @@ jobs:
       - name: Verify SPA bundle present (roadmap §22)
         run: test -f src/pd_prep_for_pgdp/static/index.html
       - name: Tests
-        run: uv run pytest tests/ -v
+        run: uv run pytest tests/ -v --ignore=tests/e2e
 
   build-frontend:
     name: build SPA

@@ -1,4 +1,4 @@
-"""Text post-processing — Step 8 of the pipeline (spec 02).
+"""Text post-processing -- Step 8 of the pipeline (spec 02).
 
 Two layers:
   - Book-agnostic: curly quotes -> straight, em dash -> double hyphen,
@@ -16,18 +16,18 @@ from collections.abc import Iterable
 
 from .models import ProjectConfig, SystemDefaults
 
-# ─── Quote / dash normalisation (lifted from pd-ocr-cli/_text_normalize.py) ──
+# --- Quote / dash normalisation (lifted from pd-ocr-cli/_text_normalize.py) --
 
 _CURLY_TO_STRAIGHT = str.maketrans(
     {
-        "‘": "'",  # left single quote
-        "’": "'",  # right single quote / apostrophe
-        "‚": "'",  # single low-9 quote
-        "‛": "'",  # single high-reversed-9 quote
-        "“": '"',  # left double quote
-        "”": '"',  # right double quote
-        "„": '"',  # double low-9 quote
-        "‟": '"',  # double high-reversed-9 quote
+        "\u2018": "'",  # LEFT SINGLE QUOTATION MARK -> straight apostrophe
+        "\u2019": "'",  # RIGHT SINGLE QUOTATION MARK -> straight apostrophe
+        "\u201a": "'",  # SINGLE LOW-9 QUOTATION MARK -> straight apostrophe
+        "\u201b": "'",  # SINGLE HIGH-REVERSED-9 QUOTATION MARK -> straight apostrophe
+        "\u201c": '"',  # LEFT DOUBLE QUOTATION MARK -> straight quote
+        "\u201d": '"',  # RIGHT DOUBLE QUOTATION MARK -> straight quote
+        "\u201e": '"',  # DOUBLE LOW-9 QUOTATION MARK -> straight quote
+        "\u201f": '"',  # DOUBLE HIGH-REVERSED-9 QUOTATION MARK -> straight quote
     }
 )
 
@@ -37,13 +37,13 @@ def normalize_curly_quotes(text: str) -> str:
 
 
 def normalize_em_dash(text: str) -> str:
-    return text.replace("—", "--")
+    return text.replace("—", "--")  # EM DASH (U+2014) -> double hyphen
 
 
-# ─── Scannos ────────────────────────────────────────────────────────────────
+# ─── Scannos ────────────────────────────────────────────────
 
 
-_TOKEN_RE = re.compile(r"\b\w+(?:[-']\w+)*\b", re.UNICODE)
+_TOKEN_RE = re.compile(r"\b\w+(?:[-\']\w+)*\b", re.UNICODE)
 
 
 def apply_scannos(text: str, scannos: dict[str, str]) -> str:
@@ -62,7 +62,7 @@ def apply_scannos(text: str, scannos: dict[str, str]) -> str:
     return _TOKEN_RE.sub(_sub, text)
 
 
-# ─── Hyphenation join ────────────────────────────────────────────────────────
+# ─── Hyphenation join ────────────────────────────────────────────────
 
 # Match a line ending in "<word>-\n<continuation>" — common case from scanned books.
 _HYPHEN_LINE_END = re.compile(r"(\w+)-\n(\w+)", re.UNICODE)
@@ -89,7 +89,7 @@ def join_hyphenated_lines(text: str, allowed_endings: Iterable[str]) -> str:
     return _HYPHEN_LINE_END.sub(_maybe_join, text)
 
 
-# ─── Custom regex passes ────────────────────────────────────────────────────
+# ─── Custom regex passes ───────────────────────────────────────────
 
 
 def apply_custom_regex_passes(text: str, passes: Iterable[tuple[str, str]]) -> str:
@@ -100,7 +100,7 @@ def apply_custom_regex_passes(text: str, passes: Iterable[tuple[str, str]]) -> s
     return out
 
 
-# ─── Top-level orchestrator ─────────────────────────────────────────────────
+# ─── Top-level orchestrator ─────────────────────────────────────────
 
 
 def postprocess_text(
