@@ -14,7 +14,7 @@ from pd_prep_for_pgdp.core.text_postprocess import (
 
 
 def test_normalize_curly_quotes_round_trips_to_ascii() -> None:
-    src = "He said “hello” to John’s house."
+    src = "He said “hello” to John\u2019s house."  # RIGHT SINGLE QUOTATION MARK (U+2019)
     assert normalize_curly_quotes(src) == 'He said "hello" to John\'s house.'
 
 

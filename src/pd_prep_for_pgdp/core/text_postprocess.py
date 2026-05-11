@@ -1,4 +1,4 @@
-"""Text post-processing — Step 8 of the pipeline (spec 02).
+"""Text post-processing -- Step 8 of the pipeline (spec 02).
 
 Two layers:
   - Book-agnostic: curly quotes -> straight, em dash -> double hyphen,
@@ -16,7 +16,7 @@ from collections.abc import Iterable
 
 from .models import ProjectConfig, SystemDefaults
 
-# ─── Quote / dash normalisation (lifted from pd-ocr-cli/_text_normalize.py) ──
+# --- Quote / dash normalisation (lifted from pd-ocr-cli/_text_normalize.py) --
 
 _CURLY_TO_STRAIGHT = str.maketrans(
     {
@@ -37,7 +37,7 @@ def normalize_curly_quotes(text: str) -> str:
 
 
 def normalize_em_dash(text: str) -> str:
-    return text.replace("—", "--")
+    return text.replace("—", "--")  # EM DASH (U+2014) -> double hyphen
 
 
 # ─── Scannos ────────────────────────────────────────────────

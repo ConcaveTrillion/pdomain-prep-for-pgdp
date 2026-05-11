@@ -115,10 +115,6 @@ ignore = [
 "src/pd_prep_for_pgdp/api/data/pages.py" = ["E741"]
 # `core/ocr.py` uses L/R/T/B locals to adapt arbitrary bbox shapes from pd-book-tools.
 "src/pd_prep_for_pgdp/core/ocr.py" = ["N806"]
-# Translation table keyed by the actual Unicode curly-quote characters — intentional.
-"src/pd_prep_for_pgdp/core/text_postprocess.py" = ["RUF001"]
-# Test verifies the normalizer round-trips curly quotes; the source literal is the input data.
-"tests/test_text_postprocess.py" = ["RUF001"]
 # Mock class mimics boto3's uppercase keyword argument names (Params, ExpiresIn).
 "tests/test_s3_storage.py" = ["N803", "N805"]
 # Lazy imports inside functions (cycle-breaking + optional-dep patterns).
