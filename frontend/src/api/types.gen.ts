@@ -625,7 +625,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * List Jobs
+         * @description List the most recent jobs for the current user (newest first).
+         */
+        get: operations["list_gpu_jobs"];
         put?: never;
         /** Submit Batch Job */
         post: operations["submit_batch_job"];
@@ -1050,7 +1054,7 @@ export interface components {
          * JobType
          * @enum {string}
          */
-        JobType: "unzip" | "thumbnails" | "batch_process_pages" | "batch_ocr" | "batch_text_postprocess" | "batch_extract_illustrations" | "build_package";
+        JobType: "unzip" | "thumbnails" | "batch_process_pages" | "batch_ocr" | "batch_text_postprocess" | "batch_extract_illustrations" | "build_package" | "run_page_stage";
         /** ListPagesResponse */
         ListPagesResponse: {
             /** Pages */
@@ -2435,7 +2439,9 @@ export interface operations {
     };
     run_page_stage: {
         parameters: {
-            query?: never;
+            query?: {
+                async?: boolean;
+            };
             header?: never;
             path: {
                 project_id: string;
@@ -2452,7 +2458,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PageStageState"];
+                    "application/json": components["schemas"]["Job"] | components["schemas"]["PageStageState"];
                 };
             };
             /** @description Validation Error */
@@ -2958,6 +2964,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ExtractIllustrationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_gpu_jobs: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"][];
                 };
             };
             /** @description Validation Error */
