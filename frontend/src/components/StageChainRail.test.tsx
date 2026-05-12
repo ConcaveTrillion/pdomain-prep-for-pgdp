@@ -1,10 +1,11 @@
 /**
- * Tests for StageChainRail — the workbench chip rail (M2 Slice 5).
+ * Tests for StageChainRail — the M3 polished workbench chip rail.
  *
  * Mounts the component against an msw-mocked API and asserts:
  *   - 22 chips render when the API returns 22 stages.
  *   - Status colors map correctly (one assertion per status enum value).
- *   - Click invokes POST /run, success refetches the list.
+ *   - Click-to-select: clean/dirty chips call onStageSelect; others are disabled.
+ *   - Thumbnails render for clean/dirty chips only.
  *   - Failed-stage tooltip surfaces error_message.
  *
  * The component pulls real PageStageState shapes from the codegen schema,
@@ -17,20 +18,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
+import type React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { components } from "../api/types.gen";
 import { server } from "../test/server";
 import { StageChainRail } from "./StageChainRail";
-
-// Mock sonner so we can assert toast calls.
-vi.mock("sonner", () => ({
-  toast: {
-    success: vi.fn(),
-    error: vi.fn(),
-  },
-}));
-import { toast } from "sonner";
 
 type PageStageState = components["schemas"]["PageStageState"];
 type PageStageStatus = components["schemas"]["PageStageStatus"];
@@ -87,7 +80,9 @@ function makeRow(
   };
 }
 
-function renderRail() {
+function renderRail(
+  props: Partial<React.ComponentProps<typeof StageChainRail>> = {},
+) {
   const qc = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -96,7 +91,7 @@ function renderRail() {
   });
   return render(
     <QueryClientProvider client={qc}>
-      <StageChainRail projectId="p1" idx0={0} />
+      <StageChainRail projectId="p1" idx0={0} {...props} />
     </QueryClientProvider>,
   );
 }
@@ -181,63 +176,6 @@ describe("StageChainRail status colors", () => {
   );
 });
 
-// ─── Click → POST → refetch ────────────────────────────────────────────────
-
-describe("StageChainRail click-to-run", () => {
-  it("clicking a chip POSTs to the run endpoint and toasts on success", async () => {
-    let postCount = 0;
-    server.use(
-      http.get("/api/data/projects/p1/pages/0/stages", () =>
-        HttpResponse.json(STAGE_IDS.map((sid) => makeRow(sid))),
-      ),
-      http.post(
-        "/api/data/projects/p1/pages/0/stages/grayscale/run",
-        async () => {
-          postCount++;
-          return HttpResponse.json(makeRow("grayscale", "clean"));
-        },
-      ),
-    );
-
-    renderRail();
-    const chip = await screen.findByTestId("stage-chip-grayscale");
-    const user = userEvent.setup();
-    await user.click(chip);
-
-    await waitFor(() => {
-      expect(postCount).toBe(1);
-    });
-    await waitFor(() => {
-      expect(toast.success).toHaveBeenCalledWith(
-        expect.stringContaining("grayscale"),
-      );
-    });
-  });
-
-  it("toasts an error and surfaces the HTTP code on failure", async () => {
-    server.use(
-      http.get("/api/data/projects/p1/pages/0/stages", () =>
-        HttpResponse.json(STAGE_IDS.map((sid) => makeRow(sid))),
-      ),
-      http.post("/api/data/projects/p1/pages/0/stages/grayscale/run", () =>
-        HttpResponse.json(
-          { detail: "stage 'grayscale': dependencies not clean" },
-          { status: 409 },
-        ),
-      ),
-    );
-
-    renderRail();
-    const chip = await screen.findByTestId("stage-chip-grayscale");
-    const user = userEvent.setup();
-    await user.click(chip);
-
-    await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("409"));
-    });
-  });
-});
-
 // ─── Failed-stage tooltip ──────────────────────────────────────────────────
 
 describe("StageChainRail tooltip", () => {
@@ -261,44 +199,93 @@ describe("StageChainRail tooltip", () => {
   });
 });
 
-// ─── View-artifact affordance ──────────────────────────────────────────────
+// ─── M3: Click-to-select ───────────────────────────────────────────────────
 
-describe("StageChainRail view affordance", () => {
-  it("renders a view link only for clean chips, pointing at the artifact route", async () => {
+describe("StageChainRail M3 click-to-select", () => {
+  it("clicking a clean chip calls onStageSelect with the stage_id", async () => {
+    const onSelect = vi.fn();
     server.use(
       http.get("/api/data/projects/p1/pages/0/stages", () =>
         HttpResponse.json([
-          makeRow("grayscale", "clean", { input_hash: "abc123" }),
-          makeRow("threshold", "not-run"),
-          ...STAGE_IDS.filter(
-            (s) => s !== "grayscale" && s !== "threshold",
-          ).map((s) => makeRow(s)),
+          makeRow("grayscale", "clean"),
+          ...STAGE_IDS.filter((s) => s !== "grayscale").map((s) => makeRow(s)),
         ]),
       ),
     );
 
-    renderRail();
+    renderRail({ onStageSelect: onSelect });
+    const chip = await screen.findByTestId("stage-chip-grayscale");
+    const user = userEvent.setup();
+    await user.click(chip);
 
-    // Clean chip has a view link.
-    const grayscaleView = await screen.findByTestId("stage-view-grayscale");
-    expect(grayscaleView).toHaveAttribute(
-      "href",
-      "/api/data/projects/p1/pages/0/stages/grayscale/artifact",
-    );
-    // Opens in a new tab so the workbench page is preserved.
-    expect(grayscaleView).toHaveAttribute("target", "_blank");
-
-    // Not-run chips do NOT get a view link (no artifact yet).
-    expect(
-      screen.queryByTestId("stage-view-threshold"),
-    ).not.toBeInTheDocument();
+    expect(onSelect).toHaveBeenCalledWith("grayscale");
   });
 
-  it("does not render a view link for failed chips", async () => {
+  it("clicking a dirty chip calls onStageSelect with the stage_id", async () => {
+    const onSelect = vi.fn();
     server.use(
       http.get("/api/data/projects/p1/pages/0/stages", () =>
         HttpResponse.json([
-          makeRow("grayscale", "failed", { error_message: "oops" }),
+          makeRow("grayscale", "dirty"),
+          ...STAGE_IDS.filter((s) => s !== "grayscale").map((s) => makeRow(s)),
+        ]),
+      ),
+    );
+
+    renderRail({ onStageSelect: onSelect });
+    const chip = await screen.findByTestId("stage-chip-grayscale");
+    const user = userEvent.setup();
+    await user.click(chip);
+
+    expect(onSelect).toHaveBeenCalledWith("grayscale");
+  });
+
+  it("not-run chip is disabled so onStageSelect is never called", async () => {
+    const onSelect = vi.fn();
+    server.use(
+      http.get("/api/data/projects/p1/pages/0/stages", () =>
+        HttpResponse.json(STAGE_IDS.map((sid) => makeRow(sid, "not-run"))),
+      ),
+    );
+
+    renderRail({ onStageSelect: onSelect });
+    const chip = await screen.findByTestId("stage-chip-grayscale");
+    expect(chip).toBeDisabled();
+    const user = userEvent.setup();
+    await user.click(chip);
+
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("not-applicable chip is disabled so onStageSelect is never called", async () => {
+    const onSelect = vi.fn();
+    server.use(
+      http.get("/api/data/projects/p1/pages/0/stages", () =>
+        HttpResponse.json([
+          makeRow("grayscale", "not-applicable"),
+          ...STAGE_IDS.filter((s) => s !== "grayscale").map((s) => makeRow(s)),
+        ]),
+      ),
+    );
+
+    renderRail({ onStageSelect: onSelect });
+    const chip = await screen.findByTestId("stage-chip-grayscale");
+    expect(chip).toBeDisabled();
+    const user = userEvent.setup();
+    await user.click(chip);
+
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+});
+
+// ─── M3: Inline thumbnails ─────────────────────────────────────────────────
+
+describe("StageChainRail M3 thumbnails", () => {
+  it("clean chip renders a thumbnail img pointing at the thumbnail endpoint", async () => {
+    server.use(
+      http.get("/api/data/projects/p1/pages/0/stages", () =>
+        HttpResponse.json([
+          makeRow("grayscale", "clean"),
           ...STAGE_IDS.filter((s) => s !== "grayscale").map((s) => makeRow(s)),
         ]),
       ),
@@ -306,9 +293,46 @@ describe("StageChainRail view affordance", () => {
 
     renderRail();
 
-    await screen.findByTestId("stage-chip-grayscale");
-    expect(
-      screen.queryByTestId("stage-view-grayscale"),
-    ).not.toBeInTheDocument();
+    await waitFor(() => {
+      const thumb = screen.queryByTestId("stage-thumb-grayscale");
+      expect(thumb).toBeInTheDocument();
+      expect(thumb).toHaveAttribute(
+        "src",
+        "/api/data/projects/p1/pages/0/stages/grayscale/thumbnail",
+      );
+    });
+  });
+
+  it("dirty chip renders a thumbnail img", async () => {
+    server.use(
+      http.get("/api/data/projects/p1/pages/0/stages", () =>
+        HttpResponse.json([
+          makeRow("grayscale", "dirty"),
+          ...STAGE_IDS.filter((s) => s !== "grayscale").map((s) => makeRow(s)),
+        ]),
+      ),
+    );
+
+    renderRail();
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("stage-thumb-grayscale")).toBeInTheDocument();
+    });
+  });
+
+  it("not-run chips do NOT render thumbnail imgs", async () => {
+    server.use(
+      http.get("/api/data/projects/p1/pages/0/stages", () =>
+        HttpResponse.json(STAGE_IDS.map((sid) => makeRow(sid, "not-run"))),
+      ),
+    );
+
+    renderRail();
+
+    await waitFor(() => {
+      // All chips are rendered but none have thumbnails.
+      expect(screen.queryByTestId("stage-chip-grayscale")).toBeInTheDocument();
+      expect(screen.queryAllByTestId(/^stage-thumb-/).length).toBe(0);
+    });
   });
 });
