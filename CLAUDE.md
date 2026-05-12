@@ -93,9 +93,3 @@ In `/workspaces/ocr-container/` (when present):
 - `pd-ocr-cli/` — the install.sh + uv-tool pattern this repo mirrors.
 - `pd-ocr-labeler/` — separate labeler UI (DocTR labels).
 - `pd-ocr-trainer/` — DocTR training, out of scope here.
-
-## Spec lifecycle
-
-Design spec files (`docs/specs/<date>-<topic>-design.md`) live in `docs/specs/` while the
-milestone's chore issues are open. When the last chore closes and the implementation ships,
-move the file to `docs/architecture/` and commit. See workspace `docs/conventions.md`.
