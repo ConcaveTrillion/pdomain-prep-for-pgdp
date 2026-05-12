@@ -1,28 +1,21 @@
 /**
- * StageChainRail — workbench chip rail for the per-page stage DAG.
+ * StageChainRail — M3 polished workbench chip rail for the per-page stage DAG.
  *
- * Spec: docs/specs/pipeline-task-model.md §"Per-page stage DAG" + the
- * M2 smoke-test in docs/08-roadmap.md §P0.5 M2. Renders one button-shaped
- * chip per stage in `GET /api/data/projects/{id}/pages/{idx0}/stages`,
- * color-coded by status, clickable to invoke
- * `POST /api/data/projects/{id}/pages/{idx0}/stages/{stage_id}/run`.
+ * Spec: docs/specs/2026-05-11-workbench-artifact-viewer-design.md §Decision #1
+ * Each chip shows a status pill + inline thumbnail (lazy-loaded). Clicking a
+ * clean/dirty chip calls onStageSelect; clicking not-run/not-applicable is a
+ * no-op (chip is disabled).
  *
- * Visual contract (per the smoke-test):
- *   - not-run        gray
- *   - running        blue + pulse
- *   - clean          green
- *   - dirty          yellow
- *   - failed         red
- *   - not-applicable slate-50 (visually quietest)
- *
- * Tooltip on hover shows last_run_at, error_message (if failed),
- * stage_version, and a truncated input_hash so the user can see exactly
- * what an old artifact's identity was.
+ * Visual contract:
+ *   - not-run        gray   (disabled)
+ *   - running        blue + pulse  (disabled)
+ *   - clean          green  (selectable)
+ *   - dirty          yellow (selectable)
+ *   - failed         red    (disabled)
+ *   - not-applicable slate-50 (visually quietest, disabled)
  */
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
-import { toast } from "sonner";
+import { useQuery } from "@tanstack/react-query";
 
 import { api } from "../api/client";
 import type { components } from "../api/types.gen";
@@ -33,26 +26,27 @@ type PageStageStatus = components["schemas"]["PageStageStatus"];
 interface Props {
   projectId: string;
   idx0: number;
+  selectedStageId?: string;
+  onStageSelect?: (stageId: string) => void;
 }
 
-// Status-to-color mapping. Keep short and readable; the tooltip carries
-// the precise textual status for users who need it.
-function chipClassesFor(status: PageStageStatus): string {
+function chipClassesFor(status: PageStageStatus, selected: boolean): string {
+  const ring = selected ? " ring-2 ring-offset-1 ring-blue-500" : "";
   switch (status) {
     case "not-run":
-      return "bg-slate-200 text-slate-700 hover:bg-slate-300 border-slate-300";
+      return `bg-slate-200 text-slate-700 border-slate-300 cursor-default opacity-60${ring}`;
     case "running":
-      return "bg-sky-200 text-sky-900 hover:bg-sky-300 border-sky-400 animate-pulse";
+      return `bg-sky-200 text-sky-900 border-sky-400 animate-pulse cursor-default${ring}`;
     case "clean":
-      return "bg-emerald-200 text-emerald-900 hover:bg-emerald-300 border-emerald-400";
+      return `bg-emerald-200 text-emerald-900 hover:bg-emerald-300 border-emerald-400 cursor-pointer${ring}`;
     case "dirty":
-      return "bg-amber-200 text-amber-900 hover:bg-amber-300 border-amber-400";
+      return `bg-amber-200 text-amber-900 hover:bg-amber-300 border-amber-400 cursor-pointer${ring}`;
     case "failed":
-      return "bg-rose-200 text-rose-900 hover:bg-rose-300 border-rose-400";
+      return `bg-rose-200 text-rose-900 border-rose-400 cursor-default opacity-70${ring}`;
     case "not-applicable":
-      return "bg-slate-50 text-slate-400 border-slate-200 italic";
+      return `bg-slate-50 text-slate-400 border-slate-200 italic cursor-default opacity-60${ring}`;
     default:
-      return "bg-slate-200 text-slate-700 border-slate-300";
+      return `bg-slate-200 text-slate-700 border-slate-300${ring}`;
   }
 }
 
@@ -71,15 +65,22 @@ function tooltipFor(row: PageStageState): string {
   if (row.error_message) {
     parts.push(`error: ${row.error_message}`);
   }
+  if (row.status === "not-run" || row.status === "not-applicable") {
+    parts.push("(no artifact yet)");
+  }
   return parts.join("\n");
 }
 
-export function StageChainRail({ projectId, idx0 }: Props) {
-  const queryClient = useQueryClient();
+const SELECTABLE: ReadonlySet<PageStageStatus> = new Set(["clean", "dirty"]);
 
-  // List all 22 stage rows for this page. Lazy-init runs server-side on
-  // first GET; subsequent calls are simple lookups. Poll every 2s while
-  // any row is `running` so chip transitions show without manual refresh.
+export function StageChainRail({
+  projectId,
+  idx0,
+  selectedStageId,
+  onStageSelect,
+}: Props) {
+  // List all 22 stage rows for this page. Poll every 2s while any row is
+  // `running` so chip transitions show without manual refresh.
   const stages = useQuery({
     queryKey: ["page-stages", projectId, idx0],
     queryFn: () =>
@@ -90,53 +91,6 @@ export function StageChainRail({ projectId, idx0 }: Props) {
       const data = q.state.data as PageStageState[] | undefined;
       const anyRunning = (data ?? []).some((row) => row.status === "running");
       return anyRunning ? 2000 : false;
-    },
-  });
-
-  // Optimistic "in-flight" set so chips show running while the POST is
-  // round-tripping. We don't reach for setQueryData here since the server
-  // is the source of truth — just a local UI state for responsiveness.
-  const [inFlight, setInFlight] = useState<Set<string>>(new Set());
-
-  const runStage = useMutation({
-    mutationFn: async (stageId: string): Promise<PageStageState> => {
-      setInFlight((prev) => {
-        const next = new Set(prev);
-        next.add(stageId);
-        return next;
-      });
-      return api.post<PageStageState>(
-        `/api/data/projects/${projectId}/pages/${idx0}/stages/${stageId}/run`,
-      );
-    },
-    onSuccess: (state) => {
-      toast.success(`stage ${state.stage_id} → ${state.status}`);
-      queryClient.invalidateQueries({
-        queryKey: ["page-stages", projectId, idx0],
-      });
-    },
-    onError: (err: unknown, stageId) => {
-      // The api client throws { status, detail } on non-2xx. Pull a
-      // user-readable message from detail when present.
-      const e = err as { status?: number; detail?: unknown };
-      const detailText =
-        typeof e?.detail === "string"
-          ? e.detail
-          : e?.detail
-            ? JSON.stringify(e.detail)
-            : "";
-      const code = e?.status ?? "?";
-      toast.error(`stage ${stageId} failed (HTTP ${code}): ${detailText}`);
-      queryClient.invalidateQueries({
-        queryKey: ["page-stages", projectId, idx0],
-      });
-    },
-    onSettled: (_data, _err, stageId) => {
-      setInFlight((prev) => {
-        const next = new Set(prev);
-        next.delete(stageId);
-        return next;
-      });
     },
   });
 
@@ -157,7 +111,7 @@ export function StageChainRail({ projectId, idx0 }: Props) {
         data-testid="stage-chain-rail"
         className="rounded border border-rose-300 bg-rose-50 p-3 text-xs text-rose-800"
       >
-        Couldn’t load stage state.
+        Couldn't load stage state.
       </div>
     );
   }
@@ -176,44 +130,39 @@ export function StageChainRail({ projectId, idx0 }: Props) {
       </div>
       <div className="flex flex-wrap gap-1">
         {rows.map((row) => {
-          const showRunning =
-            row.status === "running" || inFlight.has(row.stage_id);
-          const effectiveStatus: PageStageStatus = showRunning
-            ? "running"
-            : row.status;
-          const cls = chipClassesFor(effectiveStatus);
-          // Clean chips get a small "view" link beside them so the user
-          // can see what bytes the stage produced. M3 ships a real
-          // artifact viewer pane; this is the minimal "make it reachable"
-          // affordance — opens the artifact route in a new tab so the
-          // workbench page state is preserved.
-          const showViewLink = row.status === "clean";
+          const selectable = SELECTABLE.has(row.status);
+          const selected = row.stage_id === selectedStageId;
+          const cls = chipClassesFor(row.status, selected);
+          const thumbUrl = `/api/data/projects/${projectId}/pages/${idx0}/stages/${row.stage_id}/thumbnail`;
           return (
-            <span key={row.stage_id} className="inline-flex items-center">
+            <span
+              key={row.stage_id}
+              className="inline-flex flex-col items-center gap-0.5"
+            >
+              {/* Thumbnail: lazy-load via native loading attribute; only shown
+                  when the stage has an artifact (clean or dirty). */}
+              {selectable ? (
+                <img
+                  data-testid={`stage-thumb-${row.stage_id}`}
+                  src={thumbUrl}
+                  alt={`${row.stage_id} thumbnail`}
+                  loading="lazy"
+                  className="h-10 w-10 rounded border border-slate-200 object-cover"
+                />
+              ) : null}
               <button
                 type="button"
                 data-testid={`stage-chip-${row.stage_id}`}
-                data-status={effectiveStatus}
+                data-status={row.status}
                 className={`rounded border px-2 py-1 text-[11px] font-mono ${cls}`}
                 title={tooltipFor(row)}
-                onClick={() => runStage.mutate(row.stage_id)}
-                disabled={showRunning}
+                disabled={!selectable}
+                onClick={
+                  selectable ? () => onStageSelect?.(row.stage_id) : undefined
+                }
               >
                 {row.stage_id}
               </button>
-              {showViewLink ? (
-                <a
-                  data-testid={`stage-view-${row.stage_id}`}
-                  href={`/api/data/projects/${projectId}/pages/${idx0}/stages/${row.stage_id}/artifact`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="ml-0.5 rounded border border-emerald-300 bg-white px-1 py-1 text-[10px] text-emerald-700 hover:bg-emerald-50"
-                  title={`view ${row.stage_id} artifact in a new tab`}
-                  aria-label={`view ${row.stage_id} artifact`}
-                >
-                  view
-                </a>
-              ) : null}
             </span>
           );
         })}
