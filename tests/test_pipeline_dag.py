@@ -204,3 +204,38 @@ def test_stage_lookup_helpers_match() -> None:
     in STAGE_DAG (no defensive copying that would break identity assertions)."""
     assert all(isinstance(s, Stage) for s in STAGE_DAG)
     assert all(isinstance(s, Stage) for s in topological_order())
+
+
+# ─── Stage versioning ────────────────────────────────────────────────────────
+
+
+def test_stage_versions_covers_all_22_stages() -> None:
+    """STAGE_VERSIONS must contain an entry for every canonical stage ID."""
+    from pd_prep_for_pgdp.core.pipeline.stage_dag import STAGE_VERSIONS
+
+    assert set(STAGE_VERSIONS.keys()) == set(PAGE_STAGE_IDS), (
+        "STAGE_VERSIONS keys must match PAGE_STAGE_IDS exactly"
+    )
+
+
+def test_stage_versions_all_positive_ints() -> None:
+    """Every STAGE_VERSIONS value must be a positive integer (>= 1)."""
+    from pd_prep_for_pgdp.core.pipeline.stage_dag import STAGE_VERSIONS
+
+    for stage_id, ver in STAGE_VERSIONS.items():
+        assert isinstance(ver, int) and ver >= 1, (
+            f"STAGE_VERSIONS[{stage_id!r}] = {ver!r} is not a positive int"
+        )
+
+
+def test_stage_dag_module_docstring_documents_bump_procedure() -> None:
+    """The stage_dag module docstring must mention 'STAGE_VERSIONS' and 'bump'.
+
+    Spec: issue #59 acceptance — dag.py docstring documents the manual bump
+    procedure so developers know where to look.
+    """
+    import pd_prep_for_pgdp.core.pipeline.stage_dag as _mod
+
+    doc = _mod.__doc__ or ""
+    assert "STAGE_VERSIONS" in doc, "module docstring must mention STAGE_VERSIONS"
+    assert "bump" in doc, "module docstring must describe the bump procedure"
