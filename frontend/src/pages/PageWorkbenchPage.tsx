@@ -119,6 +119,9 @@ export function PageWorkbenchPage() {
   const [overrides, setOverrides] = useState<PageConfigOverrides>({});
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [editMode, setEditMode] = useState<EditMode>("view");
+  const [selectedStageId, setSelectedStageId] = useState<string | undefined>(
+    undefined,
+  );
 
   useEffect(() => {
     if (page.data) setOverrides(page.data.config_overrides);
@@ -276,9 +279,14 @@ export function PageWorkbenchPage() {
           </div>
         )}
 
-        {/* M2 Slice 5 — per-page stage DAG chip rail. Click a chip to
-            invoke POST /stages/{id}/run; statuses re-poll while running. */}
-        <StageChainRail projectId={projectId} idx0={idx0} />
+        {/* M3 — polished stage-chain rail. Clicking a clean/dirty chip
+            sets selectedStageId for the artifact viewer (sibling M3 chores). */}
+        <StageChainRail
+          projectId={projectId}
+          idx0={idx0}
+          selectedStageId={selectedStageId}
+          onStageSelect={setSelectedStageId}
+        />
 
         <ModeToolbar mode={editMode} onChange={setEditMode} />
 
