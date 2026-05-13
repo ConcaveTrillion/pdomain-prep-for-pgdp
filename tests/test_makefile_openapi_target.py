@@ -18,6 +18,8 @@ Cheap to keep, immediate to fail if the target regresses.
 from __future__ import annotations
 
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -88,4 +90,19 @@ def test_openapi_export_target_writes_to_repo_root_openapi_json() -> None:
         "openapi-export target writes to frontend/openapi.json, but the drift "
         "guard reads repo-root openapi.json — running the target will not "
         "refresh the file the guard checks."
+    )
+
+
+def test_export_openapi_script_writes_trailing_newline(tmp_path: Path) -> None:
+    out = tmp_path / "openapi.json"
+    result = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts" / "export_openapi.py"), str(out)],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+    )
+    assert result.returncode == 0, f"export_openapi.py failed: {result.stderr}"
+    assert out.read_bytes().endswith(b"\n"), (
+        "export_openapi.py must write JSON with a trailing newline so the "
+        "end-of-file-fixer pre-commit hook passes during `make ci`."
     )
