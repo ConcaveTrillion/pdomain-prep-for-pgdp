@@ -1,7 +1,7 @@
 # M3 — Workbench artifact viewer + stage controls panel
 
-> **Status**: Draft
-> **Last updated**: 2026-05-11
+> **Status**: Active
+> **Last updated**: 2026-05-13
 > **Spec-Issue**: ConcaveTrillion/pd-prep-for-pgdp#44
 
 ## TL;DR
@@ -52,13 +52,19 @@ Four concurrent UI pieces, each backed by a thin server contract:
 
 3. **Stage-controls panel.** Backed by a backend-served field-to-stage map (`GET
    /api/data/pipeline/stages/{stage_id}/fields` returns the `ResolvedPageConfig` field names the
-   stage reads). Renders `Apply` + `Run this stage` buttons. `Apply` mutates `ResolvedPageConfig` on
-   the page; `Run` calls the existing stage-run endpoint.
+   stage reads). The backend source of truth is a parallel `STAGE_READ_FIELDS: dict[str,
+   frozenset[str]]` dict in `stage_registry.py` — one entry per stage, listing the field names it
+   reads from `ResolvedPageConfig`. The endpoint just looks up that dict; adding a stage
+   automatically keeps the map up to date. Renders `Apply` + `Run this stage` buttons. `Apply`
+   writes the change to `ProjectConfigOverrides` AND immediately cascades dirty to all downstream
+   stages that read the affected fields; `Run` is a separate action that executes the selected
+   stage.
 
 4. **SSE for stage transitions.** New endpoint `GET /api/data/projects/{id}/pages/{idx0}/events`
-   streams `stage-status` and `stage-progress` events. Frontend subscribes via `EventSource`;
-   TanStack Query cache is invalidated on transition events so cross-tab consistency emerges from
-   query refetch.
+   streams `stage-status` and `stage-progress` events. Scoped per-page (already implemented as
+   `StageEventBroker` keyed by `project_id:page_id` in `core/stage_events.py`). Frontend
+   subscribes via `EventSource`; TanStack Query cache is invalidated on transition events so
+   cross-tab consistency emerges from query refetch.
 
 **Cache-busting:** artifact URLs include `?v=<page_stages.last_run_at>` (RFC 3339 timestamp). A
 re-run mutates `last_run_at` → URL changes → browser fetches fresh bytes.
@@ -95,8 +101,8 @@ re-run mutates `last_run_at` → URL changes → browser fetches fresh bytes.
   sufficient for cache invalidation. `input_hash` is reserved for content-addressable use cases.
 - **Thumbnails: on-demand vs pre-generated.** Pre-generating at stage-write time costs disk and
   write latency; on-demand at artifact-serve time costs CPU at view time but composes with the
-  existing `thumbnail` stage's logic. Decided: pre-generated per stage (the per-stage thumbnail uses
-  the same path as the existing `thumbnail` stage, just scoped to the stage output).
+  existing `thumbnail` stage's logic. Decided: pre-generated per stage — already implemented in
+  `page_stage_writer.py` (`_write_thumbnail` called inside `commit_stage_artifact`).
 - **Compare-with default: previous-stage vs same-stage on another page vs none.** Previous-stage is
   the highest-utility default for the "why did this regression happen?" workflow; users can pick
   something else from the selector.
@@ -119,26 +125,20 @@ re-run mutates `last_run_at` → URL changes → browser fetches fresh bytes.
 
 ## Open questions
 
-- **Field-to-stage map source of truth.** Should the map be derived from a `read_fields` declaration
-  on each `STAGE_IMPL[stage_id]` registration, or from a separate `stage_metadata.py` file?
-  **Flagged for CT review** — recommend `read_fields` declaration on registration so adding a stage
-  automatically updates the map.
-- **SSE channel scope.** Per-page (current proposal) vs per-project. Per-project lets the JobsPage
-  subscribe to one stream and react to any page's transition; per-page is simpler and tighter.
-  **Flagged for CT review** — recommend per-page for M3; project-level subscription can be added in
-  M5.
-- **Thumbnail pre-generation strategy.** Currently the M2 chip rail uses no thumbnails. Should the
-  M3 polished rail (a) require all stages to emit a thumbnail at write time, or (b) lazy-generate
-  from the artifact on first chip render? **Flagged for CT review** — recommend (a) for predictable
-  bandwidth.
-- **Stage-controls panel write semantics.** When the user clicks `Apply` without `Run`, does the
-  page's `ResolvedPageConfig` mutate immediately (and dirty all downstream stages that read those
-  fields), or only on `Run`? **Flagged for CT review** — recommend `Apply` writes config + cascades
-  dirty; `Run` is a separate action.
-- **Dirty visual treatment during a live run.** When chip X transitions to `running` and downstream
-  Y, Z are getting marked `dirty` by the eager cascade, what's the correct sequence the rail shows
-  (X-running then Y/Z-dirty after X-clean, or all three transitions visible simultaneously)?
-  **Flagged for CT review** — recommend simultaneous.
+All open questions resolved 2026-05-13:
+
+- **Field-to-stage map source of truth.** Decided: parallel `STAGE_READ_FIELDS` dict in
+  `stage_registry.py`. Endpoint looks it up; adding a stage keeps the map current automatically.
+- **SSE channel scope.** Decided: per-page. Already implemented as `StageEventBroker` keyed by
+  `project_id:page_id`. Project-level subscription deferred to M5.
+- **Thumbnail pre-generation strategy.** Decided: pre-generated at write time. Already implemented
+  in `page_stage_writer.py` (`_write_thumbnail` inside `commit_stage_artifact`).
+- **Stage-controls panel write semantics.** Decided: `Apply` writes config to
+  `ProjectConfigOverrides` + cascades dirty to affected downstream stages immediately. `Run` is a
+  separate action.
+- **Dirty visual treatment during a live run.** Decided: simultaneous — when X transitions to
+  `running`, downstream Y/Z flip to `dirty` at the same time (honest about what the DB cascade
+  already did).
 
 ## References
 
