@@ -634,6 +634,7 @@ async def run_stage(
     page_source_key: str | None = None,
     write_executor: StageWriteExecutor | None = None,
     stage_events: StageEventBroker | None = None,
+    resolved_config: Any | None = None,
 ) -> PageStageState:
     """Run one stage on one page. Dual-writes its artifact, then cascades
     dirty downstream.
@@ -659,6 +660,12 @@ async def run_stage(
     page_source_key
         IStorage key of the page's uploaded source file (``PageRecord.source_key``);
         required iff ``stage_id == 'ingest_source'``. Other stages ignore it.
+    resolved_config
+        Pre-resolved ``ResolvedPageConfig`` (or equivalent). When provided,
+        skips the internal ``_resolve_config`` DB lookup — useful for route
+        handlers that already resolved config earlier in the request. When
+        ``None`` (the default), the runner resolves config from DB as before,
+        preserving backward compatibility.
 
     Returns
     -------
@@ -740,11 +747,15 @@ async def run_stage(
     await _emit(stage_events, project_id, page_id, "stage-status", stage_id, "running")
     await _emit(stage_events, project_id, page_id, "stage-progress", stage_id, "running")
 
-    # Resolve per-page config. Reads the latest page + project + system rows
-    # from DB at run time so config changes between request and execution are
+    # Resolve per-page config. When the caller pre-resolves (e.g. the sync route
+    # handler), use that value directly. Otherwise read the latest page + project
+    # + system rows from DB so config changes between request and execution are
     # always picked up (the async job path guarantees this because the job
     # handler calls run_stage after potentially waiting in the queue).
-    cfg = await _resolve_config(database=database, project_id=project_id, page_id=page_id)
+    if resolved_config is not None:
+        cfg = resolved_config
+    else:
+        cfg = await _resolve_config(database=database, project_id=project_id, page_id=page_id)
     _cfg_hash = _compute_config_hash(cfg, stage_id)
 
     # Sentinel for the impl's in-memory output; set inside the else branch
