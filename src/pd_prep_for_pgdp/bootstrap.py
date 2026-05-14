@@ -113,13 +113,16 @@ def build_gpu_backend(
 
     if chosen == "local":
         # LocalBackend subclasses CpuBackend (DocTR/PyTorch auto-uses CUDA);
-        # adapters wire identically.
-        return LocalBackend(storage=storage, database=database, executor=executor)
+        # adapters wire identically. data_root is injected so process_page
+        # can route through run_stage (M5 #91).
+        return LocalBackend(
+            storage=storage, database=database, executor=executor, data_root=settings.data_root
+        )
     if chosen in {"cpu", "mps"}:
         # MPS is wired into DocTR automatically when torch sees Apple Silicon;
         # the rest of the pipeline runs on CPU. We treat them as the same
         # backend for adapter-selection purposes.
-        return CpuBackend(storage=storage, database=database, executor=executor)
+        return CpuBackend(storage=storage, database=database, executor=executor, data_root=settings.data_root)
     if chosen == "modal":
         if not (settings.modal_token_id and settings.modal_token_secret):
             raise RuntimeError("MODAL_TOKEN_ID + MODAL_TOKEN_SECRET required when gpu_backend=modal")

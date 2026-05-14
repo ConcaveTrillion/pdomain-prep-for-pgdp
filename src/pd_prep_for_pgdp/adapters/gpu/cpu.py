@@ -25,6 +25,8 @@ from ...core.models import (
     PageRecord,
     SystemDefaults,
 )
+from ...core.pipeline.page_stage_writer import stage_artifact_path
+from ...core.pipeline.stage_runner import run_stage
 from ...core.queue.single_executor import Priority, SingleExecutor
 from .base import (
     BatchJobItem,
@@ -39,6 +41,34 @@ from .base import (
 
 log = logging.getLogger(__name__)
 
+# Stages that produce the proofing image for a normal page (4c-4n).
+# The runner also handles blank_proof_synth for blank pages; both paths
+# terminate in a stage whose artifact is the proofing PNG. The shim runs
+# all stages through the proofing terminal — the runner skips stages
+# whose deps aren't clean (e.g. blank_proof_synth on a normal page).
+_PROCESS_PAGE_STAGES: tuple[str, ...] = (
+    "ingest_source",
+    "auto_detect_attrs",
+    "decode_source",
+    "initial_crop",
+    "manual_deskew_pre",
+    "grayscale",
+    "threshold",
+    "invert",
+    "find_content_edges",
+    "crop_to_content",
+    "auto_deskew",
+    "morph_fill",
+    "rescale",
+    "canvas_map",
+    "blank_proof_synth",
+)
+
+# Stage whose artifact is the final proofing PNG for a normal page.
+_PROOFING_STAGE_NORMAL = "canvas_map"
+# Stage whose artifact is the final proofing PNG for a blank/plate page.
+_PROOFING_STAGE_BLANK = "blank_proof_synth"
+
 
 class CpuBackend(GPUBackend):
     name = "cpu"
@@ -49,6 +79,7 @@ class CpuBackend(GPUBackend):
         storage: Any | None = None,
         database: Any | None = None,
         executor: SingleExecutor | None = None,
+        data_root: Path | None = None,
     ) -> None:
         # Optional: bootstrap.build_app may inject the storage/database
         # adapters so this backend can read source images and write outputs
@@ -60,47 +91,107 @@ class CpuBackend(GPUBackend):
         # The drain loop is started by build_app on the asyncio loop. Tests
         # that don't go through build_app fall back to anyio.to_thread.
         self._executor = executor
+        # data_root is required for run_stage-based process_page (M5 #91).
+        self._data_root = data_root
 
     async def process_page(self, req: ProcessPageRequest) -> ProcessPageResponse:
-        """Run Step 4 for a single page; return the proofing image URL."""
+        """Shim: run per-page stages via STAGE_IMPL registry, return proofing URL.
+
+        Replaces the former direct call to ``process_page_cpu``. Instead,
+        runs each stage in ``_PROCESS_PAGE_STAGES`` through ``run_stage``
+        (which dispatches via ``STAGE_IMPL[stage_id]['cpu']``). The runner
+        skips stages whose deps aren't clean (e.g. ``blank_proof_synth``
+        on a normal page raises ``StageDependenciesNotMet`` and the shim
+        catches it to try the next candidate).
+
+        After the stages run the shim reads the proofing artifact from the
+        local stage store, copies it to the canonical storage key, and
+        presigns a URL for the caller.
+        """
         if self._storage is None or self._database is None:
             raise RuntimeError(
                 "CpuBackend.process_page requires storage + database adapters (injected by build_app)."
             )
+        if self._data_root is None:
+            raise RuntimeError(
+                "CpuBackend.process_page requires data_root (injected by build_app). "
+                "Pass data_root= when constructing CpuBackend or use build_gpu_backend()."
+            )
 
-        project_record, system_defaults, page = await self._load_context(req.project_id, req.idx0)
+        _project_record, _system_defaults, page = await self._load_context(req.project_id, req.idx0)
 
         # Workbench overrides win over the persisted record for this call.
         if req.config_overrides is not None:
             page = page.model_copy(update={"config_overrides": req.config_overrides})
 
-        cfg = resolve_page_config(system_defaults, project_record.config, page)
-
+        page_id = f"{req.idx0:04d}"
         source_key = page.source_key or f"projects/{req.project_id}/source/{page.source_stem}"
-        source_bytes = await self._storage.get_bytes(source_key)
 
         t0 = time.monotonic()
 
-        from ...core.pipeline.process_page import process_page_cpu
+        # Run each process-page stage through the STAGE_IMPL registry.
+        # Per-stage failures are tolerated when they arise from unmet
+        # dependencies (e.g. blank_proof_synth on a normal page has no
+        # clean auto_detect_attrs parent). Real impl failures propagate.
+        from ...core.pipeline.stage_runner import StageDependenciesNotMet, StageRunFailed
 
-        priority = Priority.INTERACTIVE if req.output_context == "workbench" else Priority.BATCH
-        if self._executor is not None:
-            result = await self._executor.submit(priority, process_page_cpu, source_bytes, cfg)
-        else:
-            result = await anyio.to_thread.run_sync(lambda: process_page_cpu(source_bytes, cfg))
+        for stage_id in _PROCESS_PAGE_STAGES:
+            try:
+                await run_stage(
+                    data_root=self._data_root,
+                    database=self._database,
+                    project_id=req.project_id,
+                    page_id=page_id,
+                    stage_id=stage_id,
+                    device="cpu",
+                    storage=self._storage,
+                    page_source_key=source_key,
+                )
+            except StageDependenciesNotMet:
+                # Expected for the alternate branch (e.g. blank_proof_synth
+                # on a normal page, canvas_map on a blank page). Continue.
+                continue
+            except StageRunFailed:
+                # Impl failure on a specific stage; re-raise so the route
+                # handler can surface a clear error to the caller.
+                raise
 
+        # Read the proofing artifact from the local stage store.
+        # Try the normal-page terminal first; fall back to blank-page.
+        proofing_png: bytes | None = None
+        proofing_h, proofing_w = 0, 0
+        for candidate in (_PROOFING_STAGE_NORMAL, _PROOFING_STAGE_BLANK):
+            path = stage_artifact_path(self._data_root, req.project_id, page_id, candidate)
+            if path.exists():
+                import cv2  # type: ignore[import-not-found]
+                import numpy as np  # type: ignore[import-not-found]
+
+                proofing_png = path.read_bytes()
+                arr = np.frombuffer(proofing_png, dtype=np.uint8)
+                img = cv2.imdecode(arr, cv2.IMREAD_UNCHANGED)
+                if img is not None:
+                    proofing_h, proofing_w = img.shape[:2]
+                break
+
+        if proofing_png is None:
+            raise RuntimeError(
+                f"process_page: no proofing artifact found after running stages "
+                f"(project={req.project_id!r}, page={page_id!r})"
+            )
+
+        # Write proofing PNG to storage under the caller-appropriate key.
         if req.output_context == "workbench":
             out_key = f"projects/{req.project_id}/workbench_temp/{req.idx0}/proofing.png"
         else:
             out_key = f"projects/{req.project_id}/processed/{page.source_stem}_{page.prefix}.png"
-        await self._storage.put_bytes(out_key, result.proofing_png, "image/png")
+        await self._storage.put_bytes(out_key, proofing_png, "image/png")
         url = await self._storage.presign_get(out_key)
 
         elapsed_ms = int((time.monotonic() - t0) * 1000)
         return ProcessPageResponse(
             processed_image_key=out_key,
             processed_image_url=url,
-            dimensions=(result.height, result.width),
+            dimensions=(proofing_h, proofing_w),
             processing_time_ms=elapsed_ms,
             backend="cpu",
             cold_start_ms=0,
