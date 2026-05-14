@@ -151,7 +151,7 @@ describe("ArtifactViewer: selector filtering", () => {
       ),
     );
 
-    renderViewer();
+    renderViewer({ selectedStageId: "grayscale" });
 
     await waitFor(() => {
       const primarySelect = screen.getByTestId("artifact-primary-select");
@@ -181,7 +181,7 @@ describe("ArtifactViewer: selector filtering", () => {
       ),
     );
 
-    renderViewer();
+    renderViewer({ selectedStageId: "grayscale" });
 
     await waitFor(() => {
       const compareSelect = screen.getByTestId("artifact-compare-select");
@@ -269,6 +269,62 @@ describe("ArtifactViewer: extract_illustrations special case", () => {
       expect(
         screen.getByTestId("artifact-illustrations-panel"),
       ).toBeInTheDocument();
+    });
+  });
+});
+
+// ─── Acceptance 5: Pane is hidden when no chip is selected ───────────────────
+
+describe("ArtifactViewer: hidden when no chip selected", () => {
+  it("renders nothing when selectedStageId is undefined and stages exist", async () => {
+    server.use(
+      http.get("/api/data/projects/p1/pages/0/stages", () =>
+        HttpResponse.json([
+          makeRow("grayscale", "clean", { last_run_at: 1000 }),
+          makeRow("threshold", "clean", { last_run_at: 2000 }),
+          ...STAGE_IDS.filter(
+            (s) => s !== "grayscale" && s !== "threshold",
+          ).map((s) => makeRow(s)),
+        ]),
+      ),
+    );
+
+    renderViewer({ selectedStageId: undefined });
+
+    // Wait for data to load, then confirm pane is absent
+    await waitFor(() => {
+      expect(screen.queryByTestId("artifact-viewer")).not.toBeInTheDocument();
+    });
+  });
+
+  it("renders nothing when no selectedStageId (no stages at all)", async () => {
+    server.use(
+      http.get("/api/data/projects/p1/pages/0/stages", () =>
+        HttpResponse.json([]),
+      ),
+    );
+
+    renderViewer({ selectedStageId: undefined });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("artifact-viewer")).not.toBeInTheDocument();
+    });
+  });
+
+  it("appears when selectedStageId is set", async () => {
+    server.use(
+      http.get("/api/data/projects/p1/pages/0/stages", () =>
+        HttpResponse.json([
+          makeRow("grayscale", "clean", { last_run_at: 1000 }),
+          ...STAGE_IDS.filter((s) => s !== "grayscale").map((s) => makeRow(s)),
+        ]),
+      ),
+    );
+
+    renderViewer({ selectedStageId: "grayscale" });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("artifact-viewer")).toBeInTheDocument();
     });
   });
 });

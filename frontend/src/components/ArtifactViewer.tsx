@@ -143,6 +143,9 @@ export function ArtifactViewer({ projectId, idx0, selectedStageId }: Props) {
     setCompareId(undefined);
   }, [selectedStageId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Pane is hidden when no chip is selected — selectedStageId drives visibility.
+  if (!selectedStageId) return null;
+
   // Derive compare: explicit override first, then auto-upstream
   const compareIdResolved =
     compareId ??
