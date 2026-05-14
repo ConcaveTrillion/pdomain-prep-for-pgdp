@@ -33,6 +33,11 @@ make run        # builds SPA bundle, then launches pgdp-prep at http://127.0.0.1
 make run-cpu    # same, forces PGDP_GPU_BACKEND=cpu
 ```
 
+Append `AI=1` to any target for agent-friendly output — verbose output is
+captured to `.ci-ai.log`; stdout shows `✅ <target> passed` on success or
+filtered failure sections on error. Works for every target: `make ci AI=1`,
+`make test AI=1`, etc.
+
 Local dev with hot-reload (two-process):
 
 ```sh
