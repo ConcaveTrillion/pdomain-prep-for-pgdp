@@ -1,5 +1,5 @@
 /**
- * Tests for rotate mode in PageWorkbenchPage (issue #100).
+ * Tests for rotate mode in PageWorkbenchPage (issue #100 / #102).
  *
  * Acceptance bullets covered:
  * - "Rotate" button in ModeToolbar toggles rotate mode.
@@ -9,6 +9,11 @@
  * - Existing mode-switching mutually excludes rotate.
  * - Entering rotate mode pre-fills angle from stored config.
  * - Flip affordance is absent.
+ *
+ * Issue #102 — angle range and precision:
+ * - Angle stored to exactly one decimal place (rounded).
+ * - Angle is clamped/wrapped to ±180° range.
+ * - No snap-to-grid behaviour.
  */
 
 // Defuse the `react-konva` -> `konva/lib/index-node.js` -> `require("canvas")`
@@ -508,5 +513,181 @@ describe("PageWorkbenchPage — rotate mode Reset with applied angle", () => {
     await waitFor(() => {
       expect(patchCalled).toBe(false);
     });
+  });
+});
+
+// ─── Issue #102: angle range and precision ───────────────────────────────────
+
+function setupRotateHandlers(pageRecord: PageRecord = makePageRecord()) {
+  server.use(
+    http.get("/api/data/projects/prj_1/pages/0", () =>
+      HttpResponse.json(pageRecord),
+    ),
+    http.get("/api/data/projects/prj_1/pages/0/stages", () =>
+      HttpResponse.json([]),
+    ),
+    http.get("/api/data/jobs", () => HttpResponse.json([])),
+    http.patch("/api/data/projects/prj_1/pages/0", async ({ request }) => {
+      const body = await request.json();
+      return HttpResponse.json({ ...pageRecord, ...(body as object) });
+    }),
+    http.post(
+      "/api/data/projects/prj_1/pages/0/stages/manual_deskew_pre/run",
+      () =>
+        HttpResponse.json({
+          stage_id: "manual_deskew_pre",
+          status: "clean",
+          artifact_key: null,
+          artifact_url: null,
+          config_hash: null,
+          stage_version: 1,
+          ran_at: "2026-01-01T00:00:00Z",
+          error_message: null,
+        }),
+    ),
+  );
+}
+
+describe("issue #102 — angle precision: stored to one decimal place", () => {
+  it("Apply stores angle rounded to one decimal place when pre-filled from a raw float", async () => {
+    // If the stored angle is a raw float (e.g. 3.567 from a prior Konva drag),
+    // entering rotate mode pre-fills draftAngle = 3.567, and clicking Apply
+    // should store 3.6, not 3.567.
+    const pageWithRawAngle = makePageRecord({
+      config_overrides: {
+        ...makePageRecord().config_overrides,
+        manual_deskew_angle: 3.567,
+      },
+    });
+    setupRotateHandlers(pageWithRawAngle);
+
+    const patchCalls: unknown[] = [];
+    server.use(
+      http.patch("/api/data/projects/prj_1/pages/0", async ({ request }) => {
+        patchCalls.push(await request.json());
+        return HttpResponse.json(makePageRecord());
+      }),
+    );
+
+    renderWithProviders(<PageWorkbenchPage />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: /^rotate$/i }));
+    // Confirm pre-fill shows rounded value
+    await screen.findByText(/3\.6/);
+    await user.click(await screen.findByRole("button", { name: /^apply$/i }));
+
+    await waitFor(() => expect(patchCalls).toHaveLength(1));
+
+    const stored = (
+      patchCalls[0] as { config_overrides: { manual_deskew_angle: number } }
+    ).config_overrides.manual_deskew_angle;
+
+    // Must be stored as 3.6, not 3.567
+    expect(stored).toBe(3.6);
+  });
+
+  it("pre-filled stored angle -3.567 is pre-filled as -3.6 in angle readout", async () => {
+    // If server stores a raw float (e.g. from a Konva drag), the readout
+    // must display it rounded to 1dp when entering rotate mode.
+    const pageWithRawAngle = makePageRecord({
+      config_overrides: {
+        ...makePageRecord().config_overrides,
+        manual_deskew_angle: -3.567,
+      },
+    });
+    setupRotateHandlers(pageWithRawAngle);
+    renderWithProviders(<PageWorkbenchPage />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: /^rotate$/i }));
+
+    // The readout must show -3.6, not -3.567
+    await screen.findByText(/-3\.6/);
+    expect(screen.queryByText(/-3\.567/)).toBeNull();
+  });
+});
+
+describe("issue #102 — angle clamped to ±180°", () => {
+  it("discrete 90° CW from 120 wraps to -150, not 210", async () => {
+    // Start at stored 120; clicking 90° CW should add 90 and wrap within ±180.
+    // raw 120+90=210 → wraps to 210-360 = -150.
+    const pageAt120 = makePageRecord({
+      config_overrides: {
+        ...makePageRecord().config_overrides,
+        manual_deskew_angle: 120,
+      },
+    });
+    setupRotateHandlers(pageAt120);
+
+    const patchCalls: unknown[] = [];
+    server.use(
+      http.patch("/api/data/projects/prj_1/pages/0", async ({ request }) => {
+        patchCalls.push(await request.json());
+        return HttpResponse.json(makePageRecord());
+      }),
+    );
+
+    renderWithProviders(<PageWorkbenchPage />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: /^rotate$/i }));
+    // Confirm pre-fill
+    await screen.findByText(/120/);
+    await user.click(await screen.findByRole("button", { name: /^90° CW$/i }));
+
+    await waitFor(() => expect(patchCalls).toHaveLength(1));
+    const stored = (
+      patchCalls[0] as { config_overrides: { manual_deskew_angle: number } }
+    ).config_overrides.manual_deskew_angle;
+    // 120 + 90 = 210 → wraps to -150
+    expect(stored).toBe(-150);
+  });
+
+  it("discrete 90° CCW from -120 wraps to 150, not -210", async () => {
+    // raw -120-90=-210 → wraps to -210+360 = 150.
+    const pageAtMinus120 = makePageRecord({
+      config_overrides: {
+        ...makePageRecord().config_overrides,
+        manual_deskew_angle: -120,
+      },
+    });
+    setupRotateHandlers(pageAtMinus120);
+
+    const patchCalls: unknown[] = [];
+    server.use(
+      http.patch("/api/data/projects/prj_1/pages/0", async ({ request }) => {
+        patchCalls.push(await request.json());
+        return HttpResponse.json(makePageRecord());
+      }),
+    );
+
+    renderWithProviders(<PageWorkbenchPage />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: /^rotate$/i }));
+    await user.click(await screen.findByRole("button", { name: /^90° CCW$/i }));
+
+    await waitFor(() => expect(patchCalls).toHaveLength(1));
+    const stored = (
+      patchCalls[0] as { config_overrides: { manual_deskew_angle: number } }
+    ).config_overrides.manual_deskew_angle;
+    // -120 - 90 = -210 → wraps to 150
+    expect(stored).toBe(150);
+  });
+});
+
+describe("issue #102 — no snap-to-grid", () => {
+  it("angle display shows fractional values (not snapped to integer degrees)", async () => {
+    // A non-integer stored angle should display as-is at 1dp, not snapped to integers.
+    const pageWithFrac = makePageRecord({
+      config_overrides: {
+        ...makePageRecord().config_overrides,
+        manual_deskew_angle: -3.5,
+      },
+    });
+    setupRotateHandlers(pageWithFrac);
+    renderWithProviders(<PageWorkbenchPage />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: /^rotate$/i }));
+
+    // Must show -3.5, not -4 or -3 (no integer snapping)
+    await screen.findByText(/-3\.5/);
   });
 });

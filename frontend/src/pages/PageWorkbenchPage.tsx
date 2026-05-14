@@ -210,11 +210,16 @@ export function PageWorkbenchPage() {
     },
   });
 
+  // Round angle to one decimal place for display and storage (spec §Angle range and precision).
+  const roundAngle = (a: number) => Number(a.toFixed(1));
+
   // Pre-fill draftAngle when entering rotate mode if a stored angle exists.
   const handleSetEditMode = (mode: EditMode) => {
     if (mode === "rotate" && page.data) {
       const stored = page.data.config_overrides.manual_deskew_angle;
-      setDraftAngle(stored ?? 0);
+      setDraftAngle(
+        stored !== null && stored !== undefined ? roundAngle(stored) : 0,
+      );
     }
     setEditMode(mode);
   };
@@ -395,7 +400,7 @@ export function PageWorkbenchPage() {
         {editMode === "rotate" && (
           <RotateToolbar
             draftAngle={draftAngle}
-            onApply={() => applyRotation.mutate(draftAngle)}
+            onApply={() => applyRotation.mutate(roundAngle(draftAngle))}
             onReset={() => {
               setDraftAngle(0);
               // If a stored angle exists, clear the config override and re-run.
@@ -408,9 +413,10 @@ export function PageWorkbenchPage() {
             onEscape={() => setEditMode("view")}
             onDiscreteRotate={(delta) => {
               const raw = draftAngle + delta;
-              // Wrap within ±180°
-              const wrapped =
-                raw > 180 ? raw - 360 : raw < -180 ? raw + 360 : raw;
+              // Wrap within ±180°, then round to 1dp.
+              const wrapped = roundAngle(
+                raw > 180 ? raw - 360 : raw < -180 ? raw + 360 : raw,
+              );
               setDraftAngle(wrapped);
               applyRotation.mutate(wrapped);
             }}
