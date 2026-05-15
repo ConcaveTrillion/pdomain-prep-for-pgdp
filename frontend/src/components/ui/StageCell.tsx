@@ -1,6 +1,12 @@
 import { cn } from "@/lib/utils";
 
-type StageStatus = "clean" | "dirty" | "not-run" | "running" | "failed" | "na";
+export type StageStatus =
+  | "clean"
+  | "dirty"
+  | "not-run"
+  | "running"
+  | "failed"
+  | "na";
 
 const dotClass: Record<StageStatus, string> = {
   clean: "bg-stage-clean",

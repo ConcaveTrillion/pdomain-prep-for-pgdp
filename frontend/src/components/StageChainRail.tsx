@@ -28,6 +28,8 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { components } from "../api/types.gen";
 import { useStageEvents } from "../hooks/useStageEvents";
+import { StageCell } from "./ui/StageCell";
+import type { StageStatus } from "./ui/StageCell";
 
 type PageStageState = components["schemas"]["PageStageState"];
 type PageStageStatus = components["schemas"]["PageStageStatus"];
@@ -40,24 +42,18 @@ interface Props {
   onStageRun?: (stageId: string) => void;
 }
 
-function chipClassesFor(status: PageStageStatus, selected: boolean): string {
-  const ring = selected ? " ring-2 ring-offset-1 ring-blue-500" : "";
+function chipCursorFor(status: PageStageStatus): string {
   switch (status) {
-    case "not-run":
-      return `bg-slate-200 text-slate-700 border-slate-300 hover:bg-slate-300 cursor-pointer${ring}`;
     case "running":
-      return `bg-sky-200 text-sky-900 border-sky-400 animate-pulse cursor-default${ring}`;
-    case "clean":
-      return `bg-emerald-200 text-emerald-900 hover:bg-emerald-300 border-emerald-400 cursor-pointer${ring}`;
-    case "dirty":
-      return `bg-amber-200 text-amber-900 hover:bg-amber-300 border-amber-400 cursor-pointer${ring}`;
-    case "failed":
-      return `bg-rose-200 text-rose-900 border-rose-400 hover:bg-rose-300 cursor-pointer${ring}`;
     case "not-applicable":
-      return `bg-slate-50 text-slate-400 border-slate-200 italic cursor-default opacity-60${ring}`;
+      return "cursor-default";
     default:
-      return `bg-slate-200 text-slate-700 border-slate-300${ring}`;
+      return "cursor-pointer";
   }
+}
+
+function chipAnimationFor(status: PageStageStatus): string {
+  return status === "running" ? "animate-pulse" : "";
 }
 
 function tooltipFor(row: PageStageState): string {
@@ -92,6 +88,12 @@ const SELECTABLE: ReadonlySet<PageStageStatus> = new Set([
   "not-run",
   "failed",
 ]);
+
+// Map PageStageStatus → StageCell status prop.
+// "not-applicable" → "na"; all others are identical strings.
+function toStageCellStatus(status: PageStageStatus): StageStatus {
+  return status === "not-applicable" ? "na" : status;
+}
 
 // Stages with on-disk artifacts (thumbnail + artifact viewer available).
 const HAS_ARTIFACT: ReadonlySet<PageStageStatus> = new Set(["clean", "dirty"]);
@@ -178,7 +180,8 @@ export function StageChainRail({
           const selectable = SELECTABLE.has(row.status);
           const hasArtifact = HAS_ARTIFACT.has(row.status);
           const selected = row.stage_id === selectedStageId;
-          const cls = chipClassesFor(row.status, selected);
+          const cursor = chipCursorFor(row.status);
+          const animation = chipAnimationFor(row.status);
           const isImageStage = IMAGE_STAGE_IDS.has(row.stage_id);
           const thumbUrl = `/api/data/projects/${projectId}/pages/${idx0}/stages/${row.stage_id}/thumbnail`;
           return (
@@ -214,14 +217,20 @@ export function StageChainRail({
                 data-testid={`stage-chip-${row.stage_id}`}
                 data-status={row.status}
                 data-stage-id={row.stage_id}
-                className={`rounded border px-2 py-1 text-[11px] font-mono ${cls}`}
+                className={`rounded-md border-0 bg-transparent p-0 ${cursor} ${animation} focus:outline-none disabled:opacity-60`}
                 title={tooltipFor(row)}
                 disabled={!selectable}
                 onClick={
                   selectable ? () => onStageSelect?.(row.stage_id) : undefined
                 }
               >
-                {row.stage_id}
+                <StageCell
+                  stage={row.stage_id}
+                  status={toStageCellStatus(row.status)}
+                  className={
+                    selected ? "ring-2 ring-offset-1 ring-blue-500" : undefined
+                  }
+                />
               </button>
               {/* Run button: only shown for the selected selectable chip.
                   This replaces click-to-run semantics: clicking the chip

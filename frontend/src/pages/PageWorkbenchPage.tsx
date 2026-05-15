@@ -31,6 +31,7 @@ import { useActiveBatchJob } from "../hooks/useActiveBatchJob";
 import { ArtifactViewer } from "../components/ArtifactViewer";
 import { StageChainRail } from "../components/StageChainRail";
 import { StageControlsPanel } from "../components/StageControlsPanel";
+import { PageHeader } from "../components/shell/PageHeader";
 
 interface PageSplit {
   suffix: string;
@@ -327,10 +328,11 @@ export function PageWorkbenchPage() {
   return (
     <section className="grid gap-4 lg:grid-cols-[2fr_1fr]">
       <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="flex items-center gap-2 text-lg font-semibold">
-              {page.data.prefix || `#${idx0}`}
+        <PageHeader
+          title={`Page ${idx0 + 1}`}
+          description={page.data.source_stem}
+          actions={
+            <>
               {isProcessingThisPage && (
                 <span
                   className="inline-flex items-center gap-1 rounded bg-sky-100 px-2 py-0.5 text-[11px] font-medium text-sky-800 animate-pulse"
@@ -340,24 +342,21 @@ export function PageWorkbenchPage() {
                   Processing…
                 </span>
               )}
-            </h1>
-            <p className="text-xs text-slate-500">{page.data.source_stem}</p>
-          </div>
-          <div className="flex gap-2">
-            <Link
-              to={`/projects/${projectId}/pages/${Math.max(0, idx0 - 1)}`}
-              className="rounded border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50"
-            >
-              ← Prev
-            </Link>
-            <Link
-              to={`/projects/${projectId}/pages/${idx0 + 1}`}
-              className="rounded border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50"
-            >
-              Next →
-            </Link>
-          </div>
-        </div>
+              <Link
+                to={`/projects/${projectId}/pages/${Math.max(0, idx0 - 1)}`}
+                className="rounded border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50"
+              >
+                ← Prev
+              </Link>
+              <Link
+                to={`/projects/${projectId}/pages/${idx0 + 1}`}
+                className="rounded border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50"
+              >
+                Next →
+              </Link>
+            </>
+          }
+        />
 
         {page.data.processing_error && (
           <div className="rounded border border-rose-300 bg-rose-50 px-3 py-2 text-xs text-rose-800">

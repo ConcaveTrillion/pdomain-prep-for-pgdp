@@ -18,6 +18,7 @@ import { useEffect, useState } from "react";
 
 import { api } from "../api/client";
 import type { components } from "../api/types.gen";
+import { Card } from "./ui/Card";
 
 type PageStageState = components["schemas"]["PageStageState"];
 
@@ -156,30 +157,30 @@ export function ArtifactViewer({ projectId, idx0, selectedStageId }: Props) {
 
   if (stages.isPending) {
     return (
-      <div
+      <Card
         data-testid="artifact-viewer"
-        className="rounded border bg-white p-3 text-xs text-slate-500"
+        className="p-3 text-xs text-slate-500"
       >
         Loading…
-      </div>
+      </Card>
     );
   }
 
   if (available.length === 0) {
     return (
-      <div
+      <Card
         data-testid="artifact-viewer"
-        className="rounded border bg-white p-4 text-sm text-slate-500"
+        className="p-4 text-sm text-slate-500"
       >
         No stage artifacts yet. Run a stage to view its output here.
-      </div>
+      </Card>
     );
   }
 
   return (
-    <div
+    <Card
       data-testid="artifact-viewer"
-      className="space-y-3 rounded border bg-white p-3"
+      className="overflow-hidden space-y-3 p-3"
     >
       {/* Selectors row */}
       <div className="flex flex-wrap gap-4 text-sm">
@@ -254,7 +255,7 @@ export function ArtifactViewer({ projectId, idx0, selectedStageId }: Props) {
           )}
         </div>
       </div>
-    </div>
+    </Card>
   );
 }
 

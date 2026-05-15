@@ -404,6 +404,51 @@ describe("StageChainRail M3 thumbnails", () => {
   });
 });
 
+// ─── P2-4: StageCell tile rendering ───────────────────────────────────────────
+
+describe("StageChainRail P2-4 StageCell tiles", () => {
+  it("each stage chip renders the stage name text via StageCell", async () => {
+    server.use(
+      http.get("/api/data/projects/p1/pages/0/stages", () =>
+        HttpResponse.json([
+          makeRow("grayscale", "clean"),
+          ...STAGE_IDS.filter((s) => s !== "grayscale").map((s) => makeRow(s)),
+        ]),
+      ),
+    );
+
+    renderRail();
+
+    // StageCell renders the stage name as visible text inside the chip button.
+    await waitFor(() => {
+      // The chip button should contain the stage name text (rendered by StageCell).
+      const chip = screen.getByTestId("stage-chip-grayscale");
+      expect(chip).toBeInTheDocument();
+      // StageCell renders the stage id as a text node inside the chip.
+      expect(chip.textContent).toContain("grayscale");
+    });
+  });
+
+  it("clean chip renders a StageCell with matching stage name", async () => {
+    server.use(
+      http.get("/api/data/projects/p1/pages/0/stages", () =>
+        HttpResponse.json([
+          makeRow("threshold", "clean"),
+          ...STAGE_IDS.filter((s) => s !== "threshold").map((s) => makeRow(s)),
+        ]),
+      ),
+    );
+
+    renderRail();
+
+    await waitFor(() => {
+      const chip = screen.getByTestId("stage-chip-threshold");
+      // Stage name appears inside the tile (via StageCell's text span).
+      expect(chip.textContent).toContain("threshold");
+    });
+  });
+});
+
 // ─── M3: Run button in selected chip ──────────────────────────────────────────
 
 describe("StageChainRail M3 run button", () => {
