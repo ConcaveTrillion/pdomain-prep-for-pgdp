@@ -67,12 +67,12 @@ export function DialogContent({ children, className }: DialogContentProps) {
   // change.
   return (
     <RadixDialog.Portal>
-      <RadixDialog.Overlay className="fixed inset-0 z-50 bg-slate-900/40" />
+      <RadixDialog.Overlay className="fixed inset-0 z-50 bg-accent/40" />
       <RadixDialog.Content
         aria-describedby={undefined}
         className={
           className ??
-          "fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 space-y-4 rounded-lg bg-white p-6 shadow-lg"
+          "fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 space-y-4 rounded-lg bg-bg-surface p-6 shadow-lg"
         }
       >
         {children}
