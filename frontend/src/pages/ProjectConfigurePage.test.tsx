@@ -587,7 +587,11 @@ describe("ProjectConfigurePage — Download Package button", () => {
 
     await waitFor(() => {
       expect(downloadUrlFetched).toBe(true);
-      expect(mockOpen).toHaveBeenCalledWith(mockDownloadUrl, "_blank");
+      expect(mockOpen).toHaveBeenCalledWith(
+        mockDownloadUrl,
+        "_blank",
+        "noopener,noreferrer",
+      );
     });
   });
 

@@ -22,7 +22,10 @@ import {
 } from "../components/ui/Tabs";
 import { PageDrawer } from "../components/workbench/PageDrawer";
 import { PageRow } from "../components/workbench/PageRow";
-import { useActiveBatchJob } from "../hooks/useActiveBatchJob";
+import {
+  useActiveBatchJob,
+  type JobSnapshot,
+} from "../hooks/useActiveBatchJob";
 import { useJobProgress } from "../hooks/useJobProgress";
 import type { components } from "../api/types.gen";
 
@@ -725,14 +728,6 @@ function RunAllDirtyPanel({ projectId }: { projectId: string }) {
 
 type JobType = "build_package";
 
-interface JobSnapshot {
-  id: string;
-  type: string;
-  status: string;
-  progress: { current: number; total: number; message: string };
-  error_message: string | null;
-}
-
 const STEPS: { type: JobType; label: string; subtitle: string }[] = [
   {
     type: "build_package",
@@ -768,6 +763,16 @@ function RunPipelinePanel({
       setActive((s) => ({ ...s, build_package: liveBatch.jobId }));
     }
   }, [liveBatch.jobId, active.build_package]);
+
+  // Find the completed build_package job to pass to DownloadPackageButton
+  const completedBuildJob = useMemo(() => {
+    if (!liveBatch.jobs) return null;
+    return (
+      liveBatch.jobs.find(
+        (j) => j.type === "build_package" && j.status === "complete",
+      ) ?? null
+    );
+  }, [liveBatch.jobs]);
 
   const submit = useMutation({
     mutationFn: async (type: JobType) => {
@@ -858,7 +863,10 @@ function RunPipelinePanel({
                   Run
                 </button>
                 {step.type === "build_package" && (
-                  <DownloadPackageButton projectId={projectId} />
+                  <DownloadPackageButton
+                    projectId={projectId}
+                    completedBuildJob={completedBuildJob}
+                  />
                 )}
               </div>
             </li>
@@ -873,24 +881,13 @@ function RunPipelinePanel({
 
 type DownloadUrlResponse = components["schemas"]["DownloadUrlResponse"];
 
-function DownloadPackageButton({ projectId }: { projectId: string }) {
-  // Fetch all recent jobs to check if build_package has completed
-  const jobs = useQuery({
-    queryKey: ["jobs", "project", projectId],
-    queryFn: () =>
-      api.get<JobSnapshot[]>(`/api/data/jobs?project_id=${projectId}&limit=20`),
-    refetchInterval: 5000,
-  });
-
-  // Find the most recent build_package job
-  const buildPackageJob = useMemo(() => {
-    if (!jobs.data) return null;
-    return jobs.data.find((j) => j.type === "build_package") ?? null;
-  }, [jobs.data]);
-
-  // Only show button if job is completed
-  const isCompleted = buildPackageJob?.status === "complete";
-
+function DownloadPackageButton({
+  projectId,
+  completedBuildJob,
+}: {
+  projectId: string;
+  completedBuildJob: JobSnapshot | null;
+}) {
   // Mutation to fetch the download URL when the button is clicked
   const downloadMutation = useMutation({
     mutationFn: () =>
@@ -898,12 +895,12 @@ function DownloadPackageButton({ projectId }: { projectId: string }) {
         `/api/data/projects/${projectId}/assets/download-url`,
       ),
     onSuccess: (data) => {
-      // Open the URL in a new tab/window
-      window.open(data.download_url, "_blank");
+      // Open the URL in a new tab/window with noopener noreferrer for security
+      window.open(data.download_url, "_blank", "noopener,noreferrer");
     },
   });
 
-  if (!isCompleted) {
+  if (!completedBuildJob) {
     return null;
   }
 
