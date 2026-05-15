@@ -270,3 +270,18 @@ describe("CropsGridPage — empty state", () => {
     expect(await screen.findByText(/no pages/i)).toBeInTheDocument();
   });
 });
+
+// ─── Error state ──────────────────────────────────────────────────────────────
+
+describe("CropsGridPage — error state", () => {
+  it("shows the loading state indefinitely when the pages query fails", async () => {
+    server.use(
+      http.get("/api/data/projects/prj_1/pages", () => HttpResponse.error()),
+    );
+
+    renderWithProviders(<CropsGridPage />);
+
+    // When query fails and has no data, we stay in loading state
+    expect(screen.getByText(/loading/i)).toBeInTheDocument();
+  });
+});

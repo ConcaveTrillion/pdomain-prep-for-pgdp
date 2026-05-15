@@ -84,7 +84,6 @@ function ThumbnailCard({
   return (
     <Link
       to={href}
-      aria-label={page.prefix}
       className="group flex flex-col items-center gap-1 rounded border border-slate-200 bg-white p-1.5 hover:border-slate-400 hover:shadow-sm transition-all"
     >
       {page.thumbnail_key !== null ? (
