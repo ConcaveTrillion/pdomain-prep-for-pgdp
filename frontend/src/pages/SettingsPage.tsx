@@ -2,6 +2,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import type { components } from "../api/types.gen";
+import { Button, buttonVariants } from "../components/ui/Button";
+import { Card } from "../components/ui/Card";
+import { Input } from "../components/ui/Input";
+import { Separator } from "../components/ui/Separator";
+import { PageHeader } from "../components/shell/PageHeader";
+import { cn } from "@/lib/utils";
 
 // GET returns the *Output* schema (server populates every field, so they're
 // all required). PUT/POST accept the *Input* schema where defaults remain
@@ -58,11 +64,11 @@ export function SettingsPage() {
   });
 
   if (defaults.isLoading || !draft) {
-    return <p className="text-slate-500">Loading…</p>;
+    return <p className="text-ink-3">Loading…</p>;
   }
   if (defaults.error) {
     return (
-      <p className="text-red-600">
+      <p className="text-status-error">
         Couldn't load defaults: {(defaults.error as Error).message}
       </p>
     );
@@ -88,13 +94,10 @@ export function SettingsPage() {
 
   return (
     <section className="max-w-3xl space-y-6">
-      <header>
-        <h1 className="text-xl font-semibold">Settings</h1>
-        <p className="text-sm text-slate-500">
-          Defaults applied to every project unless overridden per book or per
-          page.
-        </p>
-      </header>
+      <PageHeader
+        title="Settings"
+        description="Defaults applied to every project unless overridden per book or per page."
+      />
 
       <FieldSet title="Image processing">
         <NumField
@@ -178,43 +181,44 @@ export function SettingsPage() {
 
       <FieldSet title="Text post-processing">
         <label className="block text-sm">
-          <span className="text-slate-700">
+          <span className="text-ink-2">
             Standard scannos (one per line, <code>word</code> TAB{" "}
             <code>replacement</code>)
           </span>
           <textarea
             value={scannosText}
             onChange={(e) => setScannosText(e.target.value)}
-            className="mt-1 block w-full rounded border border-slate-300 p-2 font-mono text-xs"
+            className="mt-1 block w-full rounded border border-border-2 bg-bg-surface p-2 font-mono text-xs"
             rows={6}
             spellCheck={false}
           />
         </label>
         <label className="block text-sm">
-          <span className="text-slate-700">
+          <span className="text-ink-2">
             Hyphenation-join allow-list (one prefix per line)
           </span>
           <textarea
             value={hyphenText}
             onChange={(e) => setHyphenText(e.target.value)}
-            className="mt-1 block w-full rounded border border-slate-300 p-2 font-mono text-xs"
+            className="mt-1 block w-full rounded border border-border-2 bg-bg-surface p-2 font-mono text-xs"
             rows={4}
             spellCheck={false}
           />
         </label>
       </FieldSet>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <button
+      <div className="sticky bottom-0 flex flex-wrap items-center gap-3 border-t border-border-1 bg-bg-surface px-0 py-3">
+        <Button
+          variant="primary"
+          size="sm"
           onClick={commit}
           disabled={save.isPending}
-          className="rounded bg-slate-900 px-3 py-1.5 text-sm text-white disabled:opacity-50 hover:bg-slate-800"
         >
           {save.isPending ? "Saving…" : "Save defaults"}
-        </button>
+        </Button>
         <a
           href="/api/data/system/defaults/export"
-          className="rounded border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50"
+          className={buttonVariants({ variant: "secondary", size: "sm" })}
           download="pgdp-prep-defaults.json"
         >
           Export
@@ -231,21 +235,20 @@ export function SettingsPage() {
             queryClient.invalidateQueries({ queryKey: ["system-defaults"] });
           }}
         />
-        <button
+        <Button
+          variant="danger"
+          size="sm"
           onClick={() => {
             if (confirm("Reset all system defaults to the spec defaults?"))
               reset.mutate();
           }}
           disabled={reset.isPending}
-          className="rounded border border-rose-300 px-3 py-1.5 text-sm text-rose-700 hover:bg-rose-50 disabled:opacity-50"
         >
           {reset.isPending ? "Resetting…" : "Reset to spec defaults"}
-        </button>
-        {save.isSuccess && (
-          <span className="text-sm text-emerald-700">Saved.</span>
-        )}
+        </Button>
+        {save.isSuccess && <span className="text-sm text-ink-2">Saved.</span>}
         {save.isError && (
-          <span className="text-sm text-red-600">
+          <span className="text-sm text-status-error">
             {(save.error as Error).message}
           </span>
         )}
@@ -277,10 +280,13 @@ function FieldSet({
   children: React.ReactNode;
 }) {
   return (
-    <fieldset className="space-y-3 rounded border bg-white p-4">
-      <legend className="px-1 text-sm font-semibold">{title}</legend>
+    <Card className="space-y-3 p-4">
+      <div>
+        <p className="text-sm font-semibold text-ink-1">{title}</p>
+        <Separator className="mt-2" />
+      </div>
       {children}
-    </fieldset>
+    </Card>
   );
 }
 
@@ -297,13 +303,13 @@ function NumField({
 }) {
   return (
     <label className="block text-sm">
-      <span className="text-slate-700">{label}</span>
-      <input
+      <span className="text-ink-2">{label}</span>
+      <Input
         type="number"
         step={step}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="mt-1 block w-full rounded border border-slate-300 px-2 py-1 text-sm"
+        className="mt-1"
       />
     </label>
   );
@@ -322,13 +328,13 @@ function TextField({
 }) {
   return (
     <label className="block text-sm">
-      <span className="text-slate-700">{label}</span>
-      <input
+      <span className="text-ink-2">{label}</span>
+      <Input
         type="text"
         value={value}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
-        className="mt-1 block w-full rounded border border-slate-300 px-2 py-1 text-sm"
+        className="mt-1"
       />
     </label>
   );
@@ -347,11 +353,11 @@ function SelectField({
 }) {
   return (
     <label className="block text-sm">
-      <span className="text-slate-700">{label}</span>
+      <span className="text-ink-2">{label}</span>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="mt-1 block w-full rounded border border-slate-300 px-2 py-1 text-sm"
+        className="mt-1 block w-full rounded border border-border-2 bg-bg-surface px-2 py-1 text-sm text-ink-1"
       >
         {options.map((o) => (
           <option key={o} value={o}>
@@ -386,7 +392,12 @@ function ImportButton({
   }
 
   return (
-    <label className="cursor-pointer rounded border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50">
+    <label
+      className={cn(
+        buttonVariants({ variant: "secondary", size: "sm" }),
+        "cursor-pointer",
+      )}
+    >
       Import…
       <input
         type="file"
@@ -399,7 +410,7 @@ function ImportButton({
         }}
       />
       {error && (
-        <span className="ml-2 text-xs text-rose-600">import: {error}</span>
+        <span className="ml-2 text-xs text-status-error">import: {error}</span>
       )}
     </label>
   );
