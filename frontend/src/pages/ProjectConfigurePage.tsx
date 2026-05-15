@@ -694,6 +694,7 @@ function RunPipelinePanel({ projectId }: { projectId: string }) {
   const [active, setActive] = useState<Record<JobType, string | null>>({
     build_package: null,
   });
+  const queryClient = useQueryClient();
 
   // Track any build_package job that is already running on this project (e.g.
   // user came back to this page mid-run, or it was kicked off elsewhere).
@@ -714,6 +715,13 @@ function RunPipelinePanel({ projectId }: { projectId: string }) {
       );
       setActive((s) => ({ ...s, [type]: r.job_id }));
       return r;
+    },
+    onSuccess: () => {
+      // Invalidate the jobs query immediately so useActiveBatchJob re-fetches
+      // right away, closing the gap between mutation completion and the next
+      // 3-second poll cycle. This keeps the button disabled immediately after
+      // clicking, preventing a brief flash of the enabled state.
+      queryClient.invalidateQueries({ queryKey: ["jobs", projectId] });
     },
   });
 

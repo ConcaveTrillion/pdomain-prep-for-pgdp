@@ -433,6 +433,75 @@ describe("ProjectConfigurePage — RunPipelinePanel", () => {
       expect(runBtn).toBeDisabled();
     });
   });
+
+  it("button stays disabled immediately after submit via query invalidation", async () => {
+    // Start with no jobs; after submit, the handler returns a new queued job
+    let submitted = false;
+    server.use(
+      http.get("/api/data/projects/proj1", () =>
+        HttpResponse.json(baseProject),
+      ),
+      http.get("/api/data/projects/proj1/pages", () =>
+        HttpResponse.json(pagesResponse),
+      ),
+      http.get("/api/gpu/jobs", () => HttpResponse.json([])),
+      http.get("/api/data/jobs", ({ request }) => {
+        // Before submit: empty list
+        // After submit: return the queued job
+        if (submitted) {
+          const url = new URL(request.url);
+          const projectId = url.searchParams.get("project_id");
+          if (projectId === "proj1") {
+            return HttpResponse.json([
+              {
+                id: "job_build_new",
+                type: "build_package",
+                status: "queued",
+                progress: { current: 0, total: 1, message: "" },
+              },
+            ]);
+          }
+        }
+        return HttpResponse.json([]);
+      }),
+      http.post("/api/data/projects/proj1/build-package", () => {
+        submitted = true;
+        return HttpResponse.json(
+          { job_id: "job_build_new", status: "queued" },
+          { status: 202 },
+        );
+      }),
+      http.get("/api/data/projects/proj1/review-status", () =>
+        HttpResponse.json({
+          unreviewed_count: 0,
+          awaiting_review_job_id: null,
+        }),
+      ),
+    );
+
+    renderWithProviders(<ProjectConfigurePage />);
+
+    // Find the Build package button
+    const buildLabel = await screen.findByText(/step 10 — build package/i);
+    const buildListItem = buildLabel.closest("li");
+    const runBtn = buildListItem?.querySelector(
+      'button[class*="hover:bg-slate-50"]',
+    ) as HTMLButtonElement;
+
+    // Button should be enabled initially (no active job)
+    await waitFor(() => {
+      expect(runBtn).not.toBeDisabled();
+    });
+
+    // Click the button
+    await userEvent.click(runBtn);
+
+    // After the mutation succeeds and invalidates the query, the button should
+    // remain disabled because useActiveBatchJob detects the newly-created queued job
+    await waitFor(() => {
+      expect(runBtn).toBeDisabled();
+    });
+  });
 });
 
 describe("ProjectConfigurePage — P2-3 PageDrawer via URL", () => {
