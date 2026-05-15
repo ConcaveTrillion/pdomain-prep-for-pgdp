@@ -1,15 +1,20 @@
 """Tests for `DELETE /api/data/projects/{id}/pages/{idx0}/words`
-(roadmap §9a — basic word editor, backend slice).
+and `POST /api/data/projects/{id}/pages/{idx0}/words/restore`
+(roadmap §9a — soft-delete + restore endpoint).
 
 Locks in:
-  - happy path: delete a subset of word ids, both `<root>.words.json`
-    and `<root>.txt` are rewritten, response carries the survivors
+  - soft-delete: deleted words stay in storage with ``deleted: true``;
+    ``remaining_words`` in the response contains only non-deleted words;
+  - ``get_page_text`` filters deleted words from the overlay;
+  - ``restore`` flips ``deleted`` back to ``false`` for matched ids;
+  - happy path: delete a subset of word ids, both ``<root>.words.json``
+    and ``<root>.txt`` are rewritten, response carries the survivors
     and rebuilt text;
-  - empty `word_ids` is a no-op (200, deleted_count=0) — the response
+  - empty ``word_ids`` is a no-op (200, deleted_count=0) — the response
     still reflects the current canonical state;
   - unknown ids are silently skipped (idempotent);
   - text rebuild groups words by line via y-midpoint clustering and
-    joins lines with `\\n`;
+    joins lines with ``\\n``;
   - 404 for missing project / missing page / missing words blob /
     other user's project (no-leak).
 """
@@ -88,8 +93,8 @@ def _seed_project(settings: Settings, owner_id: str = "default") -> None:
 
 
 def _seed_words(settings: Settings, words: list[OcrWord], text: str) -> tuple[str, str]:
-    """Drop a `<root>.txt` + `<root>.words.json` pair into storage and
-    return `(text_key, words_key)`."""
+    """Drop a ``<root>.txt`` + ``<root>.words.json`` pair into storage and
+    return ``(text_key, words_key)``."""
     storage = FilesystemStorage(root=settings.data_root)
     text_key = "projects/pt1/ocr_text/src1_p001.txt"
     wkey = words_key_for(text_key)
@@ -124,7 +129,7 @@ def _word(id_: str, text: str, left: int, top: int, width: int = 30, height: int
     )
 
 
-# ─── happy path ─────────────────────────────────────────────────────────────
+# ─── happy path (soft-delete) ────────────────────────────────────────────────
 
 
 def test_delete_words_rewrites_words_blob_and_text(tmp_path) -> None:
@@ -149,14 +154,20 @@ def test_delete_words_rewrites_words_blob_and_text(tmp_path) -> None:
         assert body["deleted_count"] == 1
         assert body["text_key"] == text_key
         assert body["words_key"] == wkey
+        # remaining_words contains only non-deleted words
         assert [w["id"] for w in body["remaining_words"]] == ["w1", "w3"]
         # Two lines (different y-midpoints), each one word.
         assert body["text"] == "hello\nworld"
 
-    # Storage was rewritten.
+    # Storage: all 3 words persisted, but w2 has deleted=True.
     raw = _read_storage_bytes(settings, wkey)
     persisted = json.loads(raw.decode("utf-8"))
-    assert [w["id"] for w in persisted] == ["w1", "w3"]
+    assert len(persisted) == 3  # soft-delete: w2 stays in storage
+    persisted_by_id = {w["id"]: w for w in persisted}
+    assert persisted_by_id["w1"]["deleted"] is False
+    assert persisted_by_id["w2"]["deleted"] is True
+    assert persisted_by_id["w3"]["deleted"] is False
+    # Text file rebuilt from survivors only.
     assert _read_storage_bytes(settings, text_key).decode("utf-8") == "hello\nworld"
 
 
@@ -237,7 +248,7 @@ def test_delete_words_delete_all_yields_empty_text(tmp_path) -> None:
     settings = _settings(tmp_path)
     _seed_project(settings)
     words = [_word("w1", "only", left=10, top=10)]
-    text_key, _ = _seed_words(settings, words, "only")
+    text_key, wkey = _seed_words(settings, words, "only")
 
     app = build_app(settings)
     with TestClient(app) as client:
@@ -254,6 +265,170 @@ def test_delete_words_delete_all_yields_empty_text(tmp_path) -> None:
 
     assert _read_storage_bytes(settings, text_key) == b""
 
+    # The word is still in storage (soft-delete).
+    raw = _read_storage_bytes(settings, wkey)
+    persisted = json.loads(raw.decode("utf-8"))
+    assert len(persisted) == 1
+    assert persisted[0]["deleted"] is True
+
+
+def test_delete_words_already_deleted_not_recounted(tmp_path) -> None:
+    """Deleting an already-deleted word should not increment deleted_count."""
+    settings = _settings(tmp_path)
+    _seed_project(settings)
+    words = [
+        _word("w1", "hello", left=10, top=10),
+        _word("w2", "noise", left=50, top=10),
+    ]
+    _seed_words(settings, words, "hello noise")
+
+    app = build_app(settings)
+    with TestClient(app) as client:
+        # First delete: w2 becomes deleted=True
+        r = client.request(
+            "DELETE",
+            "/api/data/projects/pt1/pages/0/words",
+            json={"word_ids": ["w2"]},
+        )
+        assert r.status_code == 200
+        assert r.json()["deleted_count"] == 1
+
+        # Second delete of same id: already deleted, count should be 0
+        r2 = client.request(
+            "DELETE",
+            "/api/data/projects/pt1/pages/0/words",
+            json={"word_ids": ["w2"]},
+        )
+        assert r2.status_code == 200
+        assert r2.json()["deleted_count"] == 0
+
+
+# ─── restore endpoint ────────────────────────────────────────────────────────
+
+
+def test_restore_words_flips_deleted_flag(tmp_path) -> None:
+    """Delete a word, then restore it; it should reappear in remaining_words
+    and have deleted=False in storage."""
+    settings = _settings(tmp_path)
+    _seed_project(settings)
+    words = [
+        _word("w1", "hello", left=10, top=10),
+        _word("w2", "noise", left=50, top=10),
+        _word("w3", "world", left=10, top=50),
+    ]
+    text_key, wkey = _seed_words(settings, words, "hello noise\nworld")
+
+    app = build_app(settings)
+    with TestClient(app) as client:
+        # Delete w2
+        r = client.request(
+            "DELETE",
+            "/api/data/projects/pt1/pages/0/words",
+            json={"word_ids": ["w2"]},
+        )
+        assert r.status_code == 200
+        assert r.json()["deleted_count"] == 1
+
+        # Restore w2
+        r2 = client.post(
+            "/api/data/projects/pt1/pages/0/words/restore",
+            json={"word_ids": ["w2"]},
+        )
+        assert r2.status_code == 200, r2.text
+        body = r2.json()
+        assert body["restored_count"] == 1
+        assert body["text_key"] == text_key
+        assert body["words_key"] == wkey
+        # All three words should be back in remaining_words
+        remaining_ids = {w["id"] for w in body["remaining_words"]}
+        assert remaining_ids == {"w1", "w2", "w3"}
+        # Text should be rebuilt from all three
+        assert "hello" in body["text"]
+        assert "noise" in body["text"]
+        assert "world" in body["text"]
+
+    # Storage: all words with deleted=False
+    raw = _read_storage_bytes(settings, wkey)
+    persisted = json.loads(raw.decode("utf-8"))
+    persisted_by_id = {w["id"]: w for w in persisted}
+    assert persisted_by_id["w2"]["deleted"] is False
+
+
+def test_restore_words_unknown_id_skipped(tmp_path) -> None:
+    """Restoring an unknown id should succeed with restored_count=0."""
+    settings = _settings(tmp_path)
+    _seed_project(settings)
+    words = [_word("w1", "hello", left=10, top=10)]
+    _seed_words(settings, words, "hello")
+
+    app = build_app(settings)
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/data/projects/pt1/pages/0/words/restore",
+            json={"word_ids": ["no-such-id"]},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["restored_count"] == 0
+        assert [w["id"] for w in body["remaining_words"]] == ["w1"]
+
+
+def test_restore_words_404_missing_words_blob(tmp_path) -> None:
+    """Restore returns 404 when there is no words blob at all."""
+    settings = _settings(tmp_path)
+    _seed_project(settings)
+    # No _seed_words call
+
+    app = build_app(settings)
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/data/projects/pt1/pages/0/words/restore",
+            json={"word_ids": ["w1"]},
+        )
+        assert r.status_code == 404
+
+
+# ─── get_page_text filters deleted words ────────────────────────────────────
+
+
+def test_get_page_text_filters_deleted_words(tmp_path) -> None:
+    """After a soft-delete, GET /text/{suffix} should return words without
+    deleted ones in the overlay."""
+    settings = _settings(tmp_path)
+    _seed_project(settings)
+
+    # Seed words where w2 is already marked deleted in storage
+    w1 = _word("w1", "hello", left=10, top=10)
+    w2 = OcrWord(
+        id="w2",
+        text="noise",
+        confidence=0.99,
+        bounding_box=BoundingBox(left=50, top=10, width=30, height=20),
+        deleted=True,  # pre-deleted in storage
+    )
+    w3 = _word("w3", "world", left=10, top=50)
+
+    storage = FilesystemStorage(root=settings.data_root)
+    text_key = "projects/pt1/ocr_text/src1_p001.txt"
+    wkey = words_key_for(text_key)
+
+    async def go() -> None:
+        await storage.put_bytes(text_key, b"hello world", "text/plain")
+        payload = json.dumps([w.model_dump(mode="json") for w in [w1, w2, w3]])
+        await storage.put_bytes(wkey, payload.encode("utf-8"), "application/json")
+
+    asyncio.run(go())
+
+    app = build_app(settings)
+    with TestClient(app) as client:
+        r = client.get("/api/data/projects/pt1/pages/0/text/_")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        word_ids = [w["id"] for w in body["words"]]
+        assert "w1" in word_ids
+        assert "w3" in word_ids
+        assert "w2" not in word_ids  # deleted word filtered out
+
 
 # ─── 404 paths ──────────────────────────────────────────────────────────────
 
@@ -261,7 +436,7 @@ def test_delete_words_delete_all_yields_empty_text(tmp_path) -> None:
 def test_delete_words_404_when_words_blob_missing(tmp_path) -> None:
     settings = _settings(tmp_path)
     _seed_project(settings)
-    # No `_seed_words` call — page exists but no .words.json on disk.
+    # No ``_seed_words`` call — page exists but no .words.json on disk.
 
     app = build_app(settings)
     with TestClient(app) as client:

@@ -1036,7 +1036,7 @@
           "pages"
         ],
         "summary": "Delete Page Words",
-        "description": "Hard-delete OCR words from a page's `<root>.words.json` and\nrewrite `<root>.txt` from the survivors (roadmap \u00a79a).\n\nv1 is intentionally a hard rewrite \u2014 the soft-delete-flag\nalternative is recorded in the roadmap as deferred. Unknown\n`word_ids` are silently skipped so the call is idempotent across\nretries; the response's `deleted_count` reports how many ids\nactually applied.",
+        "description": "Soft-delete OCR words from a page's `<root>.words.json` and\nrewrite `<root>.txt` from the survivors (roadmap \u00a79a).\n\nWords are marked ``deleted=True`` rather than removed \u2014 the full word\nlist (including deleted entries) is written back to the words blob so\nthat a subsequent restore call can flip them back. Unknown ``word_ids``\nare silently skipped and words already marked deleted are not recounted;\nthe response's ``deleted_count`` reports how many ids were newly flipped.",
         "operationId": "delete_page_words",
         "security": [
           {
@@ -1080,6 +1080,73 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DeleteWordsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/data/projects/{project_id}/pages/{idx0}/words/restore": {
+      "post": {
+        "tags": [
+          "pages"
+        ],
+        "summary": "Restore Page Words",
+        "description": "Restore previously soft-deleted OCR words for a page (roadmap \u00a79a).\n\nFlips ``deleted=True`` back to ``deleted=False`` for matching ``word_ids``.\nOnly words that were actually marked deleted count toward ``restored_count``;\nunknown ids and already-active words are silently skipped.",
+        "operationId": "restore_page_words",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "idx0",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Idx0"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreWordsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestoreWordsResponse"
                 }
               }
             }
@@ -3384,6 +3451,11 @@
               }
             ],
             "title": "Split Suffix"
+          },
+          "deleted": {
+            "type": "boolean",
+            "title": "Deleted",
+            "default": false
           }
         },
         "type": "object",
@@ -3392,7 +3464,8 @@
           "text",
           "confidence",
           "bounding_box",
-          "split_suffix"
+          "split_suffix",
+          "deleted"
         ],
         "title": "OcrWord"
       },
@@ -4845,6 +4918,69 @@
           "complete"
         ],
         "title": "ProjectStatus"
+      },
+      "RestoreWordsRequest": {
+        "properties": {
+          "split_suffix": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Split Suffix"
+          },
+          "word_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Word Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "word_ids"
+        ],
+        "title": "RestoreWordsRequest"
+      },
+      "RestoreWordsResponse": {
+        "properties": {
+          "text_key": {
+            "type": "string",
+            "title": "Text Key"
+          },
+          "words_key": {
+            "type": "string",
+            "title": "Words Key"
+          },
+          "restored_count": {
+            "type": "integer",
+            "title": "Restored Count"
+          },
+          "remaining_words": {
+            "items": {
+              "$ref": "#/components/schemas/OcrWord"
+            },
+            "type": "array",
+            "title": "Remaining Words"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text_key",
+          "words_key",
+          "restored_count",
+          "remaining_words",
+          "text"
+        ],
+        "title": "RestoreWordsResponse"
       },
       "RetryJobRequest": {
         "properties": {

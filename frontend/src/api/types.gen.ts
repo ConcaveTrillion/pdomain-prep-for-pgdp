@@ -319,16 +319,40 @@ export interface paths {
         post?: never;
         /**
          * Delete Page Words
-         * @description Hard-delete OCR words from a page's `<root>.words.json` and
+         * @description Soft-delete OCR words from a page's `<root>.words.json` and
          *     rewrite `<root>.txt` from the survivors (roadmap §9a).
          *
-         *     v1 is intentionally a hard rewrite — the soft-delete-flag
-         *     alternative is recorded in the roadmap as deferred. Unknown
-         *     `word_ids` are silently skipped so the call is idempotent across
-         *     retries; the response's `deleted_count` reports how many ids
-         *     actually applied.
+         *     Words are marked ``deleted=True`` rather than removed — the full word
+         *     list (including deleted entries) is written back to the words blob so
+         *     that a subsequent restore call can flip them back. Unknown ``word_ids``
+         *     are silently skipped and words already marked deleted are not recounted;
+         *     the response's ``deleted_count`` reports how many ids were newly flipped.
          */
         delete: operations["delete_page_words"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/data/projects/{project_id}/pages/{idx0}/words/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore Page Words
+         * @description Restore previously soft-deleted OCR words for a page (roadmap §9a).
+         *
+         *     Flips ``deleted=True`` back to ``deleted=False`` for matching ``word_ids``.
+         *     Only words that were actually marked deleted count toward ``restored_count``;
+         *     unknown ids and already-active words are silently skipped.
+         */
+        post: operations["restore_page_words"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1228,6 +1252,11 @@ export interface components {
             bounding_box: components["schemas"]["BoundingBox"];
             /** Split Suffix */
             split_suffix: string | null;
+            /**
+             * Deleted
+             * @default false
+             */
+            deleted: boolean;
         };
         /**
          * PageConfigOverrides
@@ -1690,6 +1719,26 @@ export interface components {
          * @enum {string}
          */
         ProjectStatus: "ingesting" | "configuring" | "processing" | "reviewing" | "packaging" | "complete";
+        /** RestoreWordsRequest */
+        RestoreWordsRequest: {
+            /** Split Suffix */
+            split_suffix?: string | null;
+            /** Word Ids */
+            word_ids: string[];
+        };
+        /** RestoreWordsResponse */
+        RestoreWordsResponse: {
+            /** Text Key */
+            text_key: string;
+            /** Words Key */
+            words_key: string;
+            /** Restored Count */
+            restored_count: number;
+            /** Remaining Words */
+            remaining_words: components["schemas"]["OcrWord"][];
+            /** Text */
+            text: string;
+        };
         /**
          * RetryJobRequest
          * @description Optional body for `POST /api/gpu/jobs/{id}/retry`.
@@ -2645,6 +2694,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeleteWordsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    restore_page_words: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                idx0: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RestoreWordsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RestoreWordsResponse"];
                 };
             };
             /** @description Validation Error */

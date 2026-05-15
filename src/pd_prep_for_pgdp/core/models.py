@@ -531,3 +531,4 @@ class OcrWord(ApiModel):
     confidence: float
     bounding_box: BoundingBox
     split_suffix: str | None = None
+    deleted: bool = False

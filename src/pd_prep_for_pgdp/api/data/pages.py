@@ -102,6 +102,20 @@ class DeleteWordsResponse(BaseModel):
     text: str
 
 
+class RestoreWordsRequest(BaseModel):
+    # Whole-page edits use "" / omit; per-split edits pass the suffix.
+    split_suffix: str | None = None
+    word_ids: list[str]
+
+
+class RestoreWordsResponse(BaseModel):
+    text_key: str
+    words_key: str
+    restored_count: int
+    remaining_words: list[OcrWord]
+    text: str
+
+
 @router.get(
     "/projects/{project_id}/pages",
     response_model=ListPagesResponse,
@@ -296,12 +310,14 @@ async def get_page_text(
 
     # Try to load the sibling words blob. Legacy pages OCR'd before
     # `cpu.run_ocr` started persisting words won't have one — return [].
+    # Filter out soft-deleted words so the overlay reflects the current
+    # visible word set after any delete operations.
     words: list[OcrWord] = []
     words_key = words_key_for(text_key)
     if await storage.exists(words_key):
         try:
             raw = await storage.get_bytes(words_key)
-            words = load_words_from_storage(raw)
+            words = [w for w in load_words_from_storage(raw) if not w.deleted]
         except Exception:
             log.exception("failed to decode words blob at %s; returning empty list", words_key)
             words = []
@@ -311,6 +327,8 @@ async def get_page_text(
 
 def _rebuild_text_from_words(words: list[OcrWord]) -> str:
     """Reconstruct page text from a `list[OcrWord]` after a delete.
+
+    Filters out deleted words before rebuilding.
 
     v1 strategy (deliberately simple, see roadmap §9a "Open questions"):
 
@@ -327,6 +345,7 @@ def _rebuild_text_from_words(words: list[OcrWord]) -> str:
     proofer's textarea is still the source of truth for the final
     `<root>.txt` once they save.
     """
+    words = [w for w in words if not w.deleted]
     if not words:
         return ""
 
@@ -372,14 +391,14 @@ async def delete_page_words(
     db: IDatabase = Depends(get_database),
     storage: IStorage = Depends(get_storage),
 ) -> DeleteWordsResponse:
-    """Hard-delete OCR words from a page's `<root>.words.json` and
+    """Soft-delete OCR words from a page's `<root>.words.json` and
     rewrite `<root>.txt` from the survivors (roadmap §9a).
 
-    v1 is intentionally a hard rewrite — the soft-delete-flag
-    alternative is recorded in the roadmap as deferred. Unknown
-    `word_ids` are silently skipped so the call is idempotent across
-    retries; the response's `deleted_count` reports how many ids
-    actually applied.
+    Words are marked ``deleted=True`` rather than removed — the full word
+    list (including deleted entries) is written back to the words blob so
+    that a subsequent restore call can flip them back. Unknown ``word_ids``
+    are silently skipped and words already marked deleted are not recounted;
+    the response's ``deleted_count`` reports how many ids were newly flipped.
     """
     project = await db.get_project(project_id)
     if project is None or project.owner_id != user.user_id:
@@ -416,14 +435,19 @@ async def delete_page_words(
         raise HTTPException(500, "words blob is corrupt") from exc
 
     drop = set(body.word_ids)
-    survivors = [w for w in words if w.id not in drop]
-    deleted_count = len(words) - len(survivors)
+    deleted_count = 0
+    for w in words:
+        if w.id in drop and not w.deleted:
+            w.deleted = True
+            deleted_count += 1
+
+    survivors = [w for w in words if not w.deleted]
 
     # Even when deleted_count == 0 we rewrite — keeps the response
     # contract uniform and lets the client treat this as the canonical
     # "current state of the page" round-trip.
-    new_text = _rebuild_text_from_words(survivors)
-    payload = json.dumps([w.model_dump(mode="json") for w in survivors]).encode("utf-8")
+    new_text = _rebuild_text_from_words(words)
+    payload = json.dumps([w.model_dump(mode="json") for w in words]).encode("utf-8")
     await storage.put_bytes(words_key, payload, "application/json")
     await storage.put_bytes(text_key, new_text.encode("utf-8"), "text/plain")
 
@@ -431,6 +455,77 @@ async def delete_page_words(
         text_key=text_key,
         words_key=words_key,
         deleted_count=deleted_count,
+        remaining_words=survivors,
+        text=new_text,
+    )
+
+
+@router.post(
+    "/projects/{project_id}/pages/{idx0}/words/restore",
+    response_model=RestoreWordsResponse,
+    operation_id="restore_page_words",
+)
+async def restore_page_words(
+    project_id: str,
+    idx0: int,
+    body: RestoreWordsRequest,
+    user: UserContext = Depends(get_user),
+    db: IDatabase = Depends(get_database),
+    storage: IStorage = Depends(get_storage),
+) -> RestoreWordsResponse:
+    """Restore previously soft-deleted OCR words for a page (roadmap §9a).
+
+    Flips ``deleted=True`` back to ``deleted=False`` for matching ``word_ids``.
+    Only words that were actually marked deleted count toward ``restored_count``;
+    unknown ids and already-active words are silently skipped.
+    """
+    project = await db.get_project(project_id)
+    if project is None or project.owner_id != user.user_id:
+        raise HTTPException(404, "project not found")
+    page = await db.get_page(project_id, idx0)
+    if page is None:
+        raise HTTPException(404, "page not found")
+
+    suffix = body.split_suffix or ""
+
+    text_key: str | None = None
+    for output in page.outputs:
+        if (output.split_suffix or "") == suffix and output.ocr_text_key:
+            text_key = output.ocr_text_key
+            break
+    if text_key is None:
+        full_prefix = f"{page.prefix}{suffix}"
+        stem_prefix = f"{page.source_stem}_{full_prefix}" if page.source_stem else full_prefix
+        text_key = f"projects/{project_id}/ocr_text/{stem_prefix}.txt"
+
+    words_key = words_key_for(text_key)
+    if not await storage.exists(words_key):
+        raise HTTPException(404, "words blob not found")
+
+    raw = await storage.get_bytes(words_key)
+    try:
+        words = load_words_from_storage(raw)
+    except Exception as exc:
+        log.exception("failed to decode words blob at %s", words_key)
+        raise HTTPException(500, "words blob is corrupt") from exc
+
+    restore = set(body.word_ids)
+    restored_count = 0
+    for w in words:
+        if w.id in restore and w.deleted:
+            w.deleted = False
+            restored_count += 1
+
+    survivors = [w for w in words if not w.deleted]
+    new_text = _rebuild_text_from_words(words)
+    payload = json.dumps([w.model_dump(mode="json") for w in words]).encode("utf-8")
+    await storage.put_bytes(words_key, payload, "application/json")
+    await storage.put_bytes(text_key, new_text.encode("utf-8"), "text/plain")
+
+    return RestoreWordsResponse(
+        text_key=text_key,
+        words_key=words_key,
+        restored_count=restored_count,
         remaining_words=survivors,
         text=new_text,
     )
