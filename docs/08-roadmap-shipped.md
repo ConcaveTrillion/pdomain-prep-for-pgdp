@@ -108,6 +108,103 @@ the M1 surface doesn't depend on ingest having actually run.
 
 ---
 
+## §P0.5 M2 — Per-page stage runner + dirty propagation + chip rail (2026-05-07 – 2026-05-09)
+
+Per-page stage execution engine + dirty propagation + workbench chip
+rail UI shipped across Slices 1–14. M2 follow-ups (#80, #81, #82,
+chip-rail run wiring) closed 2026-05-15 — see the dedicated
+"M2 follow-ups" entry below.
+
+**Sub-slices delivered:**
+
+- Slice 1 — §E split columns on `PageRecord`
+  (`parent_page_id`, `source_crop_bbox`, `split_index`,
+  `split_at_stage`, `split_suffix`, `reading_order`) with
+  all-or-none model validator.
+- Slice 2 — `STAGE_IMPL[stage_id][device]` registry in
+  `core/pipeline/stage_registry.py`. 3 real implementations
+  (`grayscale`/`threshold`/`invert`) wrapping
+  `pd_book_tools.image_processing.cv2_processing`; remaining 19
+  stages closure-bound placeholders raising `StageNotImplemented`.
+- Slice 3 — `core/pipeline/stage_runner.run_stage` engine. Validates
+  dependencies, marks running, loads parents off disk, dispatches to
+  the registry, dual-writes, eager-cascades dirty to descendants.
+  `StageOutputUnsupported` typed sentinel for compound-output stages.
+- Slice 4 — `POST /api/data/projects/{id}/pages/{idx0}/stages/{stage_id}/run`
+  synchronous execution route. Status mapping: 200 / 404 / 422 / 409
+  / 501 / 500. No Job wrapping (simple stages finish within request
+  window).
+- Slice 5 — `<StageChainRail>` in the workbench. 22 chips per page,
+  colour-coded by status, click → POST /run, polls every 2 s while
+  any row is `running`, tooltip surfaces `last_run_at`,
+  `stage_version`, truncated `input_hash`, `error_message`.
+- Slices 6–8 — Real CPU impls for `ingest_source`, `decode_source`,
+  `initial_crop`, `manual_deskew_pre`. `ingest_source` reads per-page
+  upload bytes via IStorage at `PageRecord.source_key`.
+  `GET .../stages/{stage_id}/artifact` route streams bytes with
+  ETag/`If-None-Match` 304 revalidation. Workbench renders a "view"
+  link beside each clean chip.
+- Slices 9–11 — Real CPU impls for `find_content_edges`,
+  `crop_to_content`, `auto_deskew`, `morph_fill`, `rescale`,
+  `canvas_map`. Runner extended with `_JSON_OUTPUT_TYPES` /
+  `_IMAGE_OUTPUT_TYPES` constants + parent-loader that branches on
+  `Stage.output_type`. End-to-end chain test covers
+  `ingest_source` → `canvas_map` (13 stages) with no manual SQLite
+  seeding.
+- Slice 13 — Real CPU impls for `thumbnail`,
+  `auto_detect_illustrations`, `ocr_crop`, `text_postprocess`.
+  Runner extended with compound-output parent handling and
+  `any_parent_ok` dispatch.
+- Slice 14 — `commit_stage_artifacts_multi` multi-file atomic
+  writer; `_ocr_cpu` (writes `words.json` + `raw.txt`) and
+  `_text_review_cpu` (identity pass) CPU impls. 21 of 22 stages
+  have real CPU impls (`extract_illustrations` deferred to M3).
+
+**Verified end-to-end:** starting from a fresh page, the user can
+click chips along the chain `ingest_source → canvas_map` in order,
+every chip transitions clean visibly, and `canvas_map`'s "view"
+link opens the final proofing PNG in a new tab.
+
+**Git audit trail:** `git log -- src/pd_prep_for_pgdp/core/pipeline/
+src/pd_prep_for_pgdp/api/data/pages.py
+frontend/src/components/StageChainRail.tsx` 2026-05-07 → 2026-05-09.
+
+---
+
+## §P0.5 M6 — Cleanup / deletion milestone (2026-05-15)
+
+M6 was a pure deletion milestone — no new UI, no new behavior. The
+signal is "everything from M5 still works _and_ the codebase is
+smaller."
+
+**What got deleted:**
+
+- `JobType.batch_process_pages` / `batch_ocr` /
+  `batch_text_postprocess` / `batch_extract_illustrations` /
+  `batch_extract_illustrations_for_page` enum values.
+- `LocalBackend` class. `CpuBackend` class.
+- `process_page_cpu` monolith.
+- Legacy `/api/gpu/process-page`, `/api/gpu/run-ocr-page`, and the
+  `batch_*` `JobType` paths on `/api/gpu/jobs`. `POST /api/gpu/jobs`
+  now returns 405 for the deleted job types.
+- `legacy_shim` module.
+
+**What replaced it:**
+
+- `STAGE_IMPL` registry + `pick_device()` is the only execution
+  path (AD-7).
+- Bootstrap uses a `_NoOpGPUBackend` stub.
+- `words_key_for` / `load_words_from_storage` moved to
+  `core/pipeline/base.py`.
+
+**Carry-forward:** the `RunPipelinePanel` in
+`frontend/src/pages/ProjectConfigurePage.tsx` was NOT updated to
+match — its 5-row UI still submits to the deleted `POST /api/gpu/jobs`
+with the deleted `JobType.batch_*` values. Tracked as **P0.1** in
+the active roadmap.
+
+---
+
 ## §13a step 1 — Radix Dialog adoption (ProjectListPage modal)
 
 First shadcn/ui adoption slice. Adds `@radix-ui/react-dialog` and a thin
@@ -520,7 +617,7 @@ row — collapses to a real WAI-ARIA `alertdialog` with focus-trap,
 scroll-lock, Escape-to-close, and a project-name confirmation body so
 the user can verify what they're about to delete.
 
-`AlertDialog` is the sibling of `Dialog` for *destructive*
+`AlertDialog` is the sibling of `Dialog` for _destructive_
 confirmations: `role="alertdialog"` (Radix sets it automatically),
 overlay-click does NOT dismiss (only Cancel or Action), and Radix
 focuses Cancel on open per the WAI-ARIA pattern so an accidental
