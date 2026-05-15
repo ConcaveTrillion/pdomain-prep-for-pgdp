@@ -5,11 +5,19 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import { DiskCostBanner } from "../components/DiskCostBanner";
 import { SearchPanel } from "../components/SearchPanel";
 import { SourcePreview } from "../components/SourcePreview";
+import { PageHeader } from "../components/shell/PageHeader";
+import { StatTile } from "../components/ui/StatTile";
+import {
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  TabsContent,
+} from "../components/ui/Tabs";
 import { useActiveBatchJob } from "../hooks/useActiveBatchJob";
 import { useJobProgress } from "../hooks/useJobProgress";
 import type { components } from "../api/types.gen";
@@ -45,6 +53,16 @@ const INGEST_KINDS = ["unzip", "thumbnails"];
 
 export function ProjectConfigurePage() {
   const { projectId = "" } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = (searchParams.get("tab") ?? "pipeline") as
+    | "pipeline"
+    | "pages"
+    | "settings";
+
+  const handleTabChange = (value: string) => {
+    setSearchParams({ tab: value });
+  };
+
   const project = useQuery({
     queryKey: ["project", projectId],
     queryFn: () => api.get<Project>(`/api/data/projects/${projectId}`),
@@ -165,104 +183,153 @@ export function ProjectConfigurePage() {
   }
 
   return (
-    <section className="space-y-4">
-      <header className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <ProjectTitleEdit
-            projectId={projectId}
-            currentName={project.data.name}
-          />
-          <p className="text-xs text-slate-500">
-            {total} pages · status: {project.data.status}
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Link
-            to={`/projects/${projectId}/pages/0`}
-            className="rounded border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50"
-          >
-            Open Workbench
-          </Link>
-          <Link
-            to={`/projects/${projectId}/review`}
-            className="rounded border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50"
-          >
-            Review queue
-          </Link>
-        </div>
-      </header>
-
-      {/* DiskCostBanner — page-local because it requires project prop from this page's query */}
-      <DiskCostBanner project={project.data} />
-
-      <BookSettingsAccordion
-        projectId={projectId}
-        config={project.data.config}
-        totalPages={total}
+    <section className="space-y-0" data-testid="project-configure-page">
+      {/* Page header with project name and action buttons */}
+      <PageHeader
+        data-testid="project-page-header"
+        title={project.data.name}
+        actions={
+          <>
+            <Link
+              to={`/projects/${projectId}/pages/0`}
+              className="rounded border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50"
+            >
+              Open Workbench
+            </Link>
+            <Link
+              to={`/projects/${projectId}/review`}
+              className="rounded border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50"
+            >
+              Review queue
+            </Link>
+          </>
+        }
       />
 
-      <RunAllDirtyPanel projectId={projectId} />
-
-      <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
-        <RunPipelinePanel
-          projectId={projectId}
-          onActivePageChange={setActivePageIdx0}
+      {/* Stat tile row */}
+      <div
+        className="flex gap-6 px-6 py-3 border-b border-border-1"
+        data-testid="stat-tile-row"
+      >
+        <StatTile
+          value={project.data.page_count ?? 0}
+          label="Total pages"
+          data-testid="stat-total-pages"
         />
-        <div className="space-y-4">
-          <ProjectJobsFeed projectId={projectId} />
-          <SearchPanel projectId={projectId} />
-        </div>
+        <StatTile value={0} label="Done" data-testid="stat-done" />
+        <StatTile
+          value={0}
+          label="Awaiting review"
+          data-testid="stat-awaiting-review"
+        />
       </div>
 
-      <BulkActions
-        projectId={projectId}
-        selected={selected}
-        onClear={() => setSelected(new Set())}
-      />
+      {/* DiskCostBanner — page-local because it requires project prop from this page's query */}
+      <div className="px-6 pt-3">
+        <DiskCostBanner project={project.data} />
+      </div>
 
-      {splitParentIds.size > 0 && (
-        <div className="flex items-center gap-2">
-          <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600">
-            <input
-              type="checkbox"
-              checked={showSplitParents}
-              onChange={(e) => setShowSplitParents(e.target.checked)}
-              className="rounded"
-            />
-            Show split parents ({splitParentIds.size})
-          </label>
-        </div>
-      )}
-
-      <PageGrid
-        pages={visiblePages}
-        projectId={projectId}
-        selected={selected}
-        activePageIdx0={activePageIdx0}
-        prefixByPageId={prefixByPageId}
-        onToggle={(idx0) => {
-          setSelected((s) => {
-            const next = new Set(s);
-            if (next.has(idx0)) next.delete(idx0);
-            else next.add(idx0);
-            return next;
-          });
-        }}
-      />
-
-      {pages.hasNextPage && (
-        <div className="text-center">
-          <button
-            onClick={() => pages.fetchNextPage()}
-            disabled={pages.isFetchingNextPage}
-            className="rounded border border-slate-300 px-4 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+      {/* URL-stateful tabs: Pipeline / Pages / Settings */}
+      <Tabs value={activeTab} onValueChange={handleTabChange} className="mt-4">
+        <TabsList className="flex border-b border-border-1 px-6 gap-1">
+          <TabsTrigger
+            value="pipeline"
+            className="px-4 py-2 text-sm data-[state=active]:border-b-2 data-[state=active]:border-slate-900 data-[state=active]:font-medium"
           >
-            {pages.isFetchingNextPage
-              ? "Loading…"
-              : `Load more (${total - allPages.length} remaining)`}
-          </button>
-        </div>
-      )}
+            Pipeline
+          </TabsTrigger>
+          <TabsTrigger
+            value="pages"
+            className="px-4 py-2 text-sm data-[state=active]:border-b-2 data-[state=active]:border-slate-900 data-[state=active]:font-medium"
+          >
+            Pages
+          </TabsTrigger>
+          <TabsTrigger
+            value="settings"
+            className="px-4 py-2 text-sm data-[state=active]:border-b-2 data-[state=active]:border-slate-900 data-[state=active]:font-medium"
+          >
+            Settings
+          </TabsTrigger>
+        </TabsList>
+
+        {/* Pipeline tab — pipeline controls */}
+        <TabsContent value="pipeline" className="space-y-4 px-6 pt-4">
+          <RunAllDirtyPanel projectId={projectId} />
+
+          <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
+            <RunPipelinePanel
+              projectId={projectId}
+              onActivePageChange={setActivePageIdx0}
+            />
+            <div className="space-y-4">
+              <ProjectJobsFeed projectId={projectId} />
+              <SearchPanel projectId={projectId} />
+            </div>
+          </div>
+        </TabsContent>
+
+        {/* Pages tab — page list / grid */}
+        <TabsContent value="pages" className="space-y-4 px-6 pt-4">
+          <BulkActions
+            projectId={projectId}
+            selected={selected}
+            onClear={() => setSelected(new Set())}
+          />
+
+          {splitParentIds.size > 0 && (
+            <div className="flex items-center gap-2">
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={showSplitParents}
+                  onChange={(e) => setShowSplitParents(e.target.checked)}
+                  className="rounded"
+                />
+                Show split parents ({splitParentIds.size})
+              </label>
+            </div>
+          )}
+
+          <PageGrid
+            pages={visiblePages}
+            projectId={projectId}
+            selected={selected}
+            activePageIdx0={activePageIdx0}
+            prefixByPageId={prefixByPageId}
+            onToggle={(idx0) => {
+              setSelected((s) => {
+                const next = new Set(s);
+                if (next.has(idx0)) next.delete(idx0);
+                else next.add(idx0);
+                return next;
+              });
+            }}
+          />
+
+          {pages.hasNextPage && (
+            <div className="text-center">
+              <button
+                onClick={() => pages.fetchNextPage()}
+                disabled={pages.isFetchingNextPage}
+                className="rounded border border-slate-300 px-4 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+              >
+                {pages.isFetchingNextPage
+                  ? "Loading…"
+                  : `Load more (${total - allPages.length} remaining)`}
+              </button>
+            </div>
+          )}
+        </TabsContent>
+
+        {/* Settings tab — book settings / config form */}
+        <TabsContent value="settings" className="space-y-4 px-6 pt-4">
+          <BookSettingsAccordion
+            projectId={projectId}
+            config={project.data.config}
+            totalPages={total}
+          />
+        </TabsContent>
+      </Tabs>
     </section>
   );
 }
@@ -921,84 +988,6 @@ function JobProgressInline({
       {pageHint}
       {event.error && ` · ${event.error}`}
     </span>
-  );
-}
-
-// ─── Project title (inline rename) ────────────────────────────────────────
-
-function ProjectTitleEdit({
-  projectId,
-  currentName,
-}: {
-  projectId: string;
-  currentName: string;
-}) {
-  const queryClient = useQueryClient();
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(currentName);
-
-  const rename = useMutation({
-    mutationFn: (name: string) =>
-      api.patch(`/api/data/projects/${projectId}/config`, {
-        name,
-        project_config: {},
-      }),
-    onSuccess: () => {
-      setEditing(false);
-      queryClient.invalidateQueries({ queryKey: ["project", projectId] });
-      queryClient.invalidateQueries({ queryKey: ["projects"] });
-    },
-  });
-
-  if (!editing) {
-    return (
-      <h1
-        className="group flex cursor-pointer items-center gap-2 text-xl font-semibold"
-        onClick={() => {
-          setDraft(currentName);
-          setEditing(true);
-        }}
-        title="Click to rename"
-      >
-        {currentName}
-        <span className="text-xs text-slate-400 opacity-0 group-hover:opacity-100">
-          edit
-        </span>
-      </h1>
-    );
-  }
-  return (
-    <form
-      className="flex items-center gap-2"
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (draft.trim()) rename.mutate(draft.trim());
-      }}
-    >
-      <input
-        autoFocus
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") setEditing(false);
-        }}
-        className="rounded border border-slate-300 px-2 py-1 text-xl font-semibold"
-      />
-      <button
-        type="submit"
-        disabled={rename.isPending}
-        className="rounded bg-slate-900 px-2 py-1 text-sm text-white disabled:opacity-50"
-      >
-        Save
-      </button>
-      <button
-        type="button"
-        onClick={() => setEditing(false)}
-        className="rounded border border-slate-300 px-2 py-1 text-sm hover:bg-slate-50"
-      >
-        Cancel
-      </button>
-    </form>
   );
 }
 
