@@ -288,3 +288,30 @@ def test_reorder_pages_auth_isolation(tmp_path) -> None:
             json={"page_ids": ["0000", "0001"]},
         )
         assert r.status_code == 404, r.text  # project not found (cross-user)
+
+
+def test_reorder_pages_duplicate_ids(tmp_path) -> None:
+    """Duplicate page_ids in request returns 422."""
+    settings = _settings(tmp_path)
+    _seed_three_page_project(settings)
+    app = build_app(settings)
+    with TestClient(app) as client:
+        # Send duplicate page IDs: ["0000", "0000", "0001"] for a 3-page project
+        r = client.patch(
+            "/api/data/projects/ro1/pages/reorder",
+            json={"page_ids": ["0000", "0000", "0001"]},
+        )
+        assert r.status_code == 422, r.text
+
+
+def test_reorder_pages_empty_list(tmp_path) -> None:
+    """Empty page_ids list returns 400 (Pydantic validation error)."""
+    settings = _settings(tmp_path)
+    _seed_three_page_project(settings)
+    app = build_app(settings)
+    with TestClient(app) as client:
+        r = client.patch(
+            "/api/data/projects/ro1/pages/reorder",
+            json={"page_ids": []},
+        )
+        assert r.status_code == 400, r.text

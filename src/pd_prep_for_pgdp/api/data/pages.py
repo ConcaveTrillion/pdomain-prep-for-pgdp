@@ -7,7 +7,7 @@ import logging
 import uuid
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import pd_prep_for_pgdp.core.pipeline.stage_dag as _stage_dag
 
@@ -120,12 +120,12 @@ class RestoreWordsResponse(BaseModel):
 class ReorderPagesRequest(BaseModel):
     """Request to reorder pages in a project.
 
-    page_ids: List of page IDs (zero-padded 4-digit idx0 strings, e.g., "0000")
-              in the desired new order. Must include all pages in the project
-              and match the project's page count.
+    page_ids: Ordered list of current idx0 values (zero-padded, e.g. '0000')
+              representing the desired page order. Must include all pages in
+              the project exactly once and match the project's page count.
     """
 
-    page_ids: list[str]
+    page_ids: list[str] = Field(..., min_length=1)
 
 
 class ReorderPagesResponse(BaseModel):
@@ -221,8 +221,9 @@ async def reorder_pages(
 ) -> ReorderPagesResponse:
     """Reorder pages in a project.
 
-    Takes a list of page IDs in the desired order and updates idx0 and prefix
-    for all pages accordingly. All pages must be from this project.
+    Takes a list of idx0 values in the desired order and updates idx0 and
+    prefix for all pages accordingly. All pages must be from this project
+    and appear exactly once.
     """
     project = await db.get_project(project_id)
     if project is None or project.owner_id != user.user_id:
@@ -235,6 +236,10 @@ async def reorder_pages(
             f"page count mismatch: expected {project.page_count}, got {len(body.page_ids)}",
         )
 
+    # Validate: no duplicate page_ids
+    if len(body.page_ids) != len(set(body.page_ids)):
+        raise HTTPException(422, detail="page_ids contains duplicates")
+
     # Fetch all pages and validate all IDs belong to this project
     pages_by_id: dict[str, PageRecord] = {}
     for page_id in body.page_ids:
@@ -246,10 +251,6 @@ async def reorder_pages(
         if page is None:
             raise HTTPException(404, f"page not found: {page_id}")
         pages_by_id[page_id] = page
-
-    # Verify we got exactly the right set of pages (no duplicates, all accounted for)
-    if set(body.page_ids) != set(pages_by_id.keys()):
-        raise HTTPException(422, "page list contains duplicates or invalid entries")
 
     # Update idx0 and prefix for each page based on new order
     updated_pages: list[PageRecord] = []

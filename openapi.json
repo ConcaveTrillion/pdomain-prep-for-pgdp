@@ -905,7 +905,7 @@
           "pages"
         ],
         "summary": "Reorder Pages",
-        "description": "Reorder pages in a project.\n\nTakes a list of page IDs in the desired order and updates idx0 and prefix\nfor all pages accordingly. All pages must be from this project.",
+        "description": "Reorder pages in a project.\n\nTakes a list of idx0 values in the desired order and updates idx0 and\nprefix for all pages accordingly. All pages must be from this project\nand appear exactly once.",
         "operationId": "reorder_pages",
         "security": [
           {
@@ -4984,6 +4984,7 @@
               "type": "string"
             },
             "type": "array",
+            "minItems": 1,
             "title": "Page Ids"
           }
         },
@@ -4992,7 +4993,7 @@
           "page_ids"
         ],
         "title": "ReorderPagesRequest",
-        "description": "Request to reorder pages in a project.\n\npage_ids: List of page IDs (zero-padded 4-digit idx0 strings, e.g., \"0000\")\n          in the desired new order. Must include all pages in the project\n          and match the project's page count."
+        "description": "Request to reorder pages in a project.\n\npage_ids: Ordered list of current idx0 values (zero-padded, e.g. '0000')\n          representing the desired page order. Must include all pages in\n          the project exactly once and match the project's page count."
       },
       "ReorderPagesResponse": {
         "properties": {
