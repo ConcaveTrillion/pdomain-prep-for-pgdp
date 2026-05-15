@@ -134,7 +134,7 @@ _STAGE_DAG_TABLE: tuple[Stage, ...] = (
         default_status="not-run",
         code_pointer="pd_prep_for_pgdp.core.illustrations:auto_detect_illustrations",
     ),
-    # ── Decomposed from process_page_cpu (4c-4o). ──────────────────────────
+    # ── Per-page pipeline stage DAG. ───────────────────────────────────────
     Stage(
         id="decode_source",
         input_type="image_bytes",

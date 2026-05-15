@@ -95,8 +95,8 @@ def _make_placeholder(stage_id: str) -> Callable[..., Any]:
 # stages at this iteration: the runner already cv2.imdecodes parent bytes
 # before calling the impl (so `decode_source` is identity in ndarray
 # space), and `initial_crop` / `manual_deskew_pre` honour their
-# default-config "no-op" branches in `process_page_cpu` (no crop / no
-# rotation) until ResolvedPageConfig plumbing lands. Carving them out
+# default-config "no-op" branches (no crop / no rotation) until
+# ResolvedPageConfig plumbing lands. Carving them out
 # now — even as no-ops — is the load-bearing change: it makes the chain
 # runnable end-to-end from `ingest_source` through `invert` without
 # manual SQLite seeding, which is the M2 smoke-test pass criterion.
@@ -119,9 +119,8 @@ def _grayscale_cpu(image: Any, cfg: Any = None) -> Any:
 def _threshold_cpu(image: Any, cfg: Any = None) -> Any:
     """Binarise a 2-D grayscale ndarray.
 
-    When ``cfg.threshold_level`` is set, applies a fixed-level binary threshold
-    (mirrors ``process_page_cpu``'s 4g branch). Otherwise falls back to Otsu
-    auto-thresholding.
+    When ``cfg.threshold_level`` is set, applies a fixed-level binary threshold.
+    Otherwise falls back to Otsu auto-thresholding.
     """
     if cfg is not None and cfg.threshold_level is not None:
         from pd_book_tools.image_processing.cv2_processing import (  # type: ignore[import-not-found]
@@ -185,15 +184,14 @@ def _decode_source_cpu(image: Any, cfg: Any = None) -> Any:
 def _initial_crop_cpu(image: Any, cfg: Any = None) -> Any:
     """Apply project/per-page initial-crop insets, or pass through at default.
 
-    Mirrors ``process_page_cpu``'s 4d branch: resolves the effective crop
-    insets from ``cfg.initial_crop`` (per-page) or ``cfg.initial_crop_all``
-    (project-wide). When all four insets are zero the image is forwarded
-    unchanged.
+    Resolves the effective crop insets from ``cfg.initial_crop`` (per-page) or
+    ``cfg.initial_crop_all`` (project-wide). When all four insets are zero the
+    image is forwarded unchanged.
     """
     if cfg is None:
         return image
 
-    # Per-page override wins over project-wide default (same as process_page_cpu).
+    # Per-page override wins over project-wide default.
     crop = cfg.initial_crop or cfg.initial_crop_all
     if not any(crop):
         return image
@@ -209,9 +207,8 @@ def _initial_crop_cpu(image: Any, cfg: Any = None) -> Any:
 def _manual_deskew_pre_cpu(image: Any, cfg: Any = None) -> Any:
     """Apply the optional pre-crop manual rotation, or pass through at default.
 
-    Mirrors ``process_page_cpu``'s 4e branch: rotation fires when
-    ``cfg.deskew_before_crop`` is not ``None``. At default (``None``) the image
-    is forwarded unchanged.
+    Rotation fires when ``cfg.deskew_before_crop`` is not ``None``. At default
+    (``None``) the image is forwarded unchanged.
     """
     if cfg is None or cfg.deskew_before_crop is None:
         return image
@@ -241,8 +238,7 @@ def _find_content_edges_cpu(image: Any, cfg: Any = None) -> tuple[int, int, int,
     """Find the bounding box of the content region in a binary inverted image.
 
     Returns (minX, maxX, minY, maxY) — the four edge coordinates passed to
-    `crop_to_rectangle` in step 4j. Wraps `find_edges` from pd_book_tools
-    using the same default parameters as `process_page_cpu` (4i).
+    `crop_to_rectangle`. Wraps `find_edges` from pd_book_tools.
 
     The runner encodes this as a JSON list and writes it to `output.json`.
     """
@@ -254,16 +250,15 @@ def _find_content_edges_cpu(image: Any, cfg: Any = None) -> tuple[int, int, int,
 
 
 def _crop_to_content_cpu(image: Any, bbox: tuple[int, int, int, int], cfg: Any = None) -> Any:
-    """Crop the binary image to the content bounding box (step 4j).
+    """Crop the binary image to the content bounding box.
 
     `image` is the inverted binary ndarray (from `invert`);
     `bbox` is (minX, maxX, minY, maxY) from `find_content_edges`.
 
-    Wraps `crop_to_rectangle`. The optional whitespace-pad step in
-    `process_page_cpu` 4j fires only when `cfg.white_space_additional`
-    is set — at default config (no override) it is skipped.
-    ResolvedPageConfig plumbing into the runner lands later; this
-    iteration always takes the no-pad branch.
+    Wraps `crop_to_rectangle`. The optional whitespace-pad step fires only
+    when `cfg.white_space_additional` is set — at default config (no override)
+    it is skipped. ResolvedPageConfig plumbing into the runner lands later;
+    this iteration always takes the no-pad branch.
     """
     from pd_book_tools.image_processing.cv2_processing import (  # type: ignore[import-not-found]
         crop_to_rectangle,
@@ -274,10 +269,9 @@ def _crop_to_content_cpu(image: Any, bbox: tuple[int, int, int, int], cfg: Any =
 
 
 def _auto_deskew_cpu(image: Any, cfg: Any = None) -> Any:
-    """Auto-deskew the binary content image (step 4k).
+    """Auto-deskew the binary content image.
 
-    Mirrors `process_page_cpu`'s 4k branch for the common case
-    (no manual override, non-special alignment, standard orientation).
+    Common case: no manual override, non-special alignment, standard orientation.
     ResolvedPageConfig skip conditions land when config plumbing is wired;
     for now, always attempt auto-deskew via `auto_deskew(pct=0.30)`.
     """
@@ -291,13 +285,12 @@ def _auto_deskew_cpu(image: Any, cfg: Any = None) -> Any:
 
 
 def _morph_fill_cpu(image: Any, cfg: Any = None) -> Any:
-    """Apply morphological fill to close small gaps in text strokes (step 4l).
+    """Apply morphological fill to close small gaps in text strokes.
 
-    Optional in `process_page_cpu` via `cfg.do_morph`; default is False,
-    but wiring the impl now means the stage can run harmlessly via morph_fill
-    at its default call — pd_book_tools' `morph_fill` is idempotent on
-    already-clean binary images. ResolvedPageConfig plumbing will expose
-    the do_morph toggle; until then the impl always runs.
+    Optional via ``cfg.do_morph``; default is False, but wiring the impl
+    now means the stage can run harmlessly — pd_book_tools' `morph_fill` is
+    idempotent on already-clean binary images. ResolvedPageConfig plumbing
+    will expose the do_morph toggle; until then the impl always runs.
     """
     from pd_book_tools.image_processing.cv2_processing import (  # type: ignore[import-not-found]
         morph_fill,
@@ -307,9 +300,9 @@ def _morph_fill_cpu(image: Any, cfg: Any = None) -> Any:
 
 
 def _rescale_cpu(image: Any, cfg: Any = None) -> Any:
-    """Re-invert + rescale to canonical aspect ratio (step 4m).
+    """Re-invert + rescale to canonical aspect ratio.
 
-    `process_page_cpu` calls `rescale_image(invert_image(img_deskewed), target_short_side=1000)`.
+    Calls `rescale_image(invert_image(img_deskewed), target_short_side=1000)`.
     The inversion here is intentional: `morph_fill` outputs a binary image with
     text=255/bg=0; `rescale_image` expects text=0/bg=255 (white-on-black).
     The inversion restores that convention before scaling.
@@ -323,10 +316,10 @@ def _rescale_cpu(image: Any, cfg: Any = None) -> Any:
 
 
 def _canvas_map_cpu(image: Any, cfg: Any = None) -> Any:
-    """Map the rescaled image onto a canonical canvas (step 4n).
+    """Map the rescaled image onto a canonical canvas.
 
     Wraps `map_content_onto_scaled_canvas` with the default alignment
-    (Alignment.DEFAULT) and the canonical h/w ratio used in `process_page_cpu`.
+    (Alignment.DEFAULT) and a canonical h/w ratio.
     ResolvedPageConfig plumbing (alignment override, page_h_w_ratio from
     per-page config) lands when the runner passes cfg into impls; for now,
     DEFAULT alignment and ratio=1.294 (US Letter ~8.5:11) are the documented
@@ -411,8 +404,7 @@ def _blank_proof_synth_cpu(page_attrs: dict[str, Any], cfg: Any = None) -> Any:
     ndarray of a white page at the detected aspect ratio. The runner
     PNG-encodes the result (output_type='image_bytes').
 
-    Mirrors `process_page_cpu`'s 4b branch: `blank_proof.create_blank_proof`
-    with `h_w_ratio` from the detected page attributes. Falls back to 1.65
+    Uses `h_w_ratio` from the detected page attributes. Falls back to 1.65
     (US-Letter proportions) when the field is absent or zero.
     """
     import numpy as np  # type: ignore[import-not-found]

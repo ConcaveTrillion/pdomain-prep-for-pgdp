@@ -467,7 +467,7 @@ PAGE_STAGE_IDS: tuple[str, ...] = (
     "thumbnail",
     "auto_detect_attrs",
     "auto_detect_illustrations",
-    # Decomposed from process_page_cpu (4c-4o).
+    # Per-page pipeline stages.
     "decode_source",
     "initial_crop",
     "manual_deskew_pre",
