@@ -1,0 +1,26 @@
+import { cn } from "@/lib/utils";
+import type { ReactNode } from "react";
+
+interface KeyCapProps {
+  children: ReactNode;
+  className?: string;
+  "data-testid"?: string;
+}
+
+export function KeyCap({
+  children,
+  className,
+  "data-testid": testId,
+}: KeyCapProps) {
+  return (
+    <kbd
+      data-testid={testId}
+      className={cn(
+        "inline-flex items-center justify-center rounded border border-border-2 bg-bg-raised px-1.5 py-0.5 font-mono text-xs text-ink-2 shadow-sm",
+        className,
+      )}
+    >
+      {children}
+    </kbd>
+  );
+}

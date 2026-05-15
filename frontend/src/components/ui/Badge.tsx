@@ -15,6 +15,7 @@
  * `children` overrides the default label when provided.
  */
 import type { ReactNode } from "react";
+import { cn } from "@/lib/utils";
 
 export type BadgeStatus =
   | "running"
@@ -36,38 +37,38 @@ interface StatusMeta {
 const STATUS_META: Record<BadgeStatus, StatusMeta> = {
   running: {
     label: "Running",
-    cls: "bg-blue-50 text-blue-700 ring-blue-600/20",
-    dot: "bg-blue-500",
+    cls: "bg-status-running-bg text-status-running ring-status-running/20",
+    dot: "bg-status-running",
   },
   complete: {
     label: "Done",
-    cls: "bg-emerald-50 text-emerald-700 ring-emerald-600/20",
-    dot: "bg-emerald-500",
+    cls: "bg-status-done-bg text-status-done ring-status-done/20",
+    dot: "bg-status-done",
   },
   queued: {
     label: "Queued",
-    cls: "bg-slate-50 text-slate-600 ring-slate-500/20",
-    dot: "bg-slate-400",
+    cls: "bg-status-queued-bg text-status-queued ring-status-queued/20",
+    dot: "bg-status-queued",
   },
   scheduled: {
     label: "Scheduled",
-    cls: "bg-amber-50 text-amber-700 ring-amber-600/20",
-    dot: "bg-amber-400",
+    cls: "bg-status-queued-bg text-status-queued ring-status-queued/20",
+    dot: "bg-status-queued",
   },
   error: {
     label: "Errored",
-    cls: "bg-red-50 text-red-700 ring-red-600/20",
-    dot: "bg-red-500",
+    cls: "bg-status-error-bg text-status-error ring-status-error/20",
+    dot: "bg-status-error",
   },
   cancelled: {
     label: "Cancelled",
-    cls: "bg-slate-100 text-slate-500 ring-slate-400/20",
-    dot: "bg-slate-400",
+    cls: "bg-status-queued-bg text-ink-3 ring-border-1/20",
+    dot: "bg-status-queued",
   },
   awaiting_review: {
     label: "Review",
-    cls: "bg-amber-50 text-amber-800 ring-amber-600/20",
-    dot: "bg-amber-500",
+    cls: "bg-status-review-bg text-status-review ring-status-review/20",
+    dot: "bg-status-review",
   },
 };
 
@@ -75,15 +76,26 @@ export interface BadgeProps {
   status: BadgeStatus;
   children?: ReactNode;
   className?: string;
+  "data-testid"?: string;
 }
 
-export function Badge({ status, children, className = "" }: BadgeProps) {
+export function Badge({
+  status,
+  children,
+  className = "",
+  "data-testid": testId,
+}: BadgeProps) {
   const meta = STATUS_META[status];
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${meta.cls} ${className}`}
+      data-testid={testId}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset",
+        meta.cls,
+        className,
+      )}
     >
-      <span aria-hidden className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} />
+      <span aria-hidden className={cn("h-1.5 w-1.5 rounded-full", meta.dot)} />
       {children ?? meta.label}
     </span>
   );
