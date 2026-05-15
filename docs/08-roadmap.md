@@ -201,26 +201,20 @@ concurrency-safe lazy-init, and `pgdp-prep reindex [--heal]`.
   stages now route through `commit_stage_artifacts_multi`. 21 of 22 stages
   have real CPU impls (`extract_illustrations` deferred to M3).
 
-**Queued for M2 follow-up slices (or rolled into M3):**
+**M2 follow-up items (all shipped 2026-05-15 — see `08-roadmap-shipped.md`):**
 
-- Bounded deferred-write executor with `PGDP_STAGE_WRITE_POOL_SIZE` +
-  `PGDP_STAGE_WRITE_QUEUE_CAP` knobs (canonical spec Q8). Dual-write
-  reconciler is in place but writes go through synchronously today —
-  the bounded queue lets a "Run all dirty stages" fan-out limit how
-  many writes pile up at once.
-- ResolvedPageConfig plumbing into the runner so config-aware stages
-  (`initial_crop`'s actual `crop_edges` call, `manual_deskew_pre`'s
-  `rotate_image`, `threshold`'s manual override) can read the page's
-  resolved config. Today these stages all take their default
-  (no-op / Otsu-auto) branches. M3 stage-controls panel needs this.
+- Bounded deferred-write executor (#80) — shipped.
+- ResolvedPageConfig plumbing (#81) — shipped.
+- Optional `?async=true` run route flag (#82) — shipped.
+- Chip-rail `onStageRun` wiring + `not-run`/`failed` chips selectable — shipped.
+
+**Remaining carry-forward:**
+
 - LocalBackend / CpuBackend collapse to `pick_device()` shims onto
   the registry; old `/api/gpu/*` endpoints become route shims onto
   the new endpoint. Deferred to M5/M6 cleanup so today's pages keep
   working through the existing GPU backend until the registry is
   exhaustive.
-- Optional ?async=true flag on the run route returning a Job id for
-  slow stages (`ocr`, `extract_illustrations`). `ocr` now has a real
-  impl; async route flag becomes useful now that DocTR can be fired.
 
 **Required test fixtures:** the test zip from M1.
 

@@ -662,3 +662,39 @@ bytes (source_zip_bytes × 12) with a "Reclaim space" placeholder dialog.
   `FULL_DAG_RATIO=12` constant; `_compute_stage_artifacts_bytes` / `_compute_source_zip_bytes`
   helpers in `api/data/projects.py` — commit `1239dbb` (issue #97).
 - `DiskCostBanner` component (9 Vitest tests) wired into ProjectConfigurePage — commit `26b9dfc`.
+
+---
+
+## §P0.5 M2 follow-ups — bounded write pool + ResolvedPageConfig + async run + chip-rail wiring (2026-05-15)
+
+Three M2 follow-up issues shipped as part of earlier slices (Slice 14/15); formally
+closed 2026-05-15 after the chip-rail run wiring landed.
+
+**#80 — Bounded deferred-write executor (Q8):** `StageWriteExecutor` in
+`core/pipeline/stage_write_executor.py` provides a `ThreadPoolExecutor` (pool_size
+workers) + `BoundedSemaphore` (queue_cap) with back-pressure. Env-var overrides
+`PGDP_STAGE_WRITE_POOL_SIZE` / `PGDP_STAGE_WRITE_QUEUE_CAP` via `Settings`. Wired
+into `run_stage` via `_commit_single_artifact` (deferred path: optimistic DB update,
+background file write; `on_failure` marks stage `failed` and cascades dirty, Q9).
+Full test coverage in `tests/test_stage_write_executor.py`. Shipped in Slice 14
+alongside the multi-artifact writer.
+
+**#81 — ResolvedPageConfig plumbing:** `run_stage` accepts `resolved_config:
+ResolvedPageConfig | None` kwarg. Route handler resolves config from DB and passes
+it in. Async job path re-resolves at execution time. Config hash per stage computed
+via `_compute_config_hash` using `STAGE_CONFIG_FIELDS` map. Shipped in Slice 14/15.
+
+**#82 — Optional `?async=true` on run route:** `POST /stages/{stage_id}/run`
+accepts `async_: bool = Query(False, alias="async")`. When true: creates a
+`JobType.run_page_stage` job (status=queued) and returns 202 Accepted. The
+`InProcessJobRunner` handles `run_page_stage` via `_handle_run_page_stage`. Full
+test coverage in `tests/test_async_run_stage_route.py`. Shipped in Slice 15.
+
+**Chip-rail run wiring (2026-05-15):** `PageWorkbenchPage` now passes `onStageRun`
+to `StageChainRail` via a `runStage` mutation (sync for fast stages, `?async=true`
+for `ocr`/`extract_illustrations`). `StageChainRail` `SELECTABLE` set extended to
+include `not-run` and `failed` chips so users can select and run any stage from the
+workbench (previously only `clean`/`dirty` chips were selectable). Thumbnail/icon
+rendering guarded by `HAS_ARTIFACT` (`clean`/`dirty` only). `StageControlsPanel`
+and `PageWorkbenchPage.onApplied` now invalidate the correct `["page-stages", ...]`
+query key. Commit `e8e5254`.
