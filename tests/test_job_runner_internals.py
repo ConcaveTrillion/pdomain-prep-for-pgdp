@@ -148,3 +148,49 @@ async def test_run_forever_swallows_run_pending_exception(
     runner.stop()
     await asyncio.wait_for(task, timeout=2.0)
     assert calls["n"] >= 2  # exception was swallowed and we kept going
+
+
+@pytest.mark.asyncio
+async def test_run_forever_circuit_breaker_trips_after_max_failures(
+    db: SqliteDatabase, storage: FilesystemStorage, monkeypatch
+) -> None:
+    """After _CIRCUIT_BREAKER_MAX consecutive run_pending failures, run_forever must raise."""
+
+    runner = InProcessJobRunner(database=db, storage=storage, poll_interval=0.01)
+
+    async def always_boom(*, max_jobs: int = 8) -> int:
+        raise RuntimeError("persistent DB failure")
+
+    monkeypatch.setattr(runner, "run_pending", always_boom)
+
+    with pytest.raises(RuntimeError, match="circuit breaker"):
+        await asyncio.wait_for(runner.run_forever(), timeout=5.0)
+
+
+@pytest.mark.asyncio
+async def test_run_forever_circuit_breaker_resets_on_success(
+    db: SqliteDatabase, storage: FilesystemStorage, monkeypatch
+) -> None:
+    """A successful iteration resets the consecutive-failure counter."""
+    from pd_prep_for_pgdp.core.job_runner import _CIRCUIT_BREAKER_MAX
+
+    runner = InProcessJobRunner(database=db, storage=storage, poll_interval=0.01)
+
+    calls: list[int] = []
+
+    async def sometimes_boom(*, max_jobs: int = 8) -> int:
+        n = len(calls)
+        calls.append(n)
+        # Fail for first (MAX-1) calls, then succeed, then stop.
+        if n < _CIRCUIT_BREAKER_MAX - 1:
+            raise RuntimeError("transient failure")
+        if n == _CIRCUIT_BREAKER_MAX - 1:
+            return 0  # success resets counter
+        # After the reset, stop the loop so the test finishes.
+        runner.stop()
+        return 0
+
+    monkeypatch.setattr(runner, "run_pending", sometimes_boom)
+
+    # Should NOT raise: failures never reach MAX consecutively.
+    await asyncio.wait_for(runner.run_forever(), timeout=5.0)

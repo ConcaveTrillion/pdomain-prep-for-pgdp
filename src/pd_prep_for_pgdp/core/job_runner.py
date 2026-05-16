@@ -34,6 +34,10 @@ from .packaging import build_package
 
 log = logging.getLogger(__name__)
 
+# After this many consecutive poll-iteration failures, run_forever raises instead
+# of silently swallowing the error.  A transient blip resets the counter to 0.
+_CIRCUIT_BREAKER_MAX = 5
+
 
 class InProcessJobRunner:
     def __init__(
@@ -131,14 +135,26 @@ class InProcessJobRunner:
         Polls the queue, sleeps `poll_interval`, repeats. Exits between
         iterations so we never tear down with a worker thread mid-SQLite
         call (that's a hard segfault when the connection is closed under it).
+
+        Circuit breaker: after `_CIRCUIT_BREAKER_MAX` *consecutive* poll
+        failures the loop re-raises instead of spinning forever as a silent
+        no-op.  A single successful iteration resets the counter to zero.
         """
+        consecutive_failures = 0
         while not self._stop.is_set():
             try:
                 await self.run_pending(max_jobs=8)
+                consecutive_failures = 0
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
                 log.exception("InProcessJobRunner.run_pending iteration failed")
+                consecutive_failures += 1
+                if consecutive_failures >= _CIRCUIT_BREAKER_MAX:
+                    raise RuntimeError(
+                        f"InProcessJobRunner circuit breaker tripped after "
+                        f"{consecutive_failures} consecutive failures"
+                    ) from exc
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=self._poll)
                 return

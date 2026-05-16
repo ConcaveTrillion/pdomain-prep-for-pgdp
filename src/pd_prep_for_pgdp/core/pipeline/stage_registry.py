@@ -507,11 +507,13 @@ def _auto_detect_illustrations_cpu(image: Any, cfg: Any = None) -> list[Any]:
 
     # Try loading the layout detector from pd_book_tools. This is a heavy
     # optional dependency (model weights); if absent, fall back to no-op.
+    # Only ImportError is caught — runtime errors (CUDA init, OOM, …) propagate
+    # so the stage is marked `failed` rather than silently producing no regions.
     try:
         from pd_book_tools.layout import get_layout_detector  # type: ignore[import-not-found]
 
         detector = get_layout_detector()
-    except Exception:
+    except ImportError:
         detector = None
 
     if detector is None:

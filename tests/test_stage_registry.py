@@ -577,6 +577,55 @@ def test_auto_detect_illustrations_cpu_returns_list() -> None:
     assert isinstance(out, list)
 
 
+def test_auto_detect_illustrations_import_error_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ImportError during layout detector load must silently fall back to [] (no model installed)."""
+    import sys
+
+    # Remove cached module so the inner import re-runs.
+    sys.modules.pop("pd_book_tools.layout", None)
+    sys.modules.pop("pd_book_tools.layout.get_layout_detector", None)
+
+    with monkeypatch.context() as m:
+        # Make the import fail as if the optional package is missing.
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _block_layout(name, *args, **kwargs):
+            if name == "pd_book_tools.layout":
+                raise ImportError("pd_book_tools.layout not installed")
+            return real_import(name, *args, **kwargs)
+
+        m.setattr(builtins, "__import__", _block_layout)
+
+        fn = get_stage_impl("auto_detect_illustrations", "cpu")
+        img = _solid_color_bgr(h=200, w=150)
+        # ImportError → graceful fallback → empty list.
+        out = fn(img)
+    assert out == []
+
+
+def test_auto_detect_illustrations_non_import_error_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A RuntimeError during get_layout_detector() must propagate (not silently return [])."""
+    import sys
+
+    # Ensure the import itself succeeds but get_layout_detector raises.
+    import types
+
+    fake_layout_mod = types.ModuleType("pd_book_tools.layout")
+
+    def _boom():
+        raise RuntimeError("CUDA init failed")
+
+    fake_layout_mod.get_layout_detector = _boom  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "pd_book_tools.layout", fake_layout_mod)
+
+    fn = get_stage_impl("auto_detect_illustrations", "cpu")
+    img = _solid_color_bgr(h=200, w=150)
+    with pytest.raises(RuntimeError, match="CUDA init failed"):
+        fn(img)
+
+
 # ─── Real impl: ocr (Slice 14) ───────────────────────────────────────────────
 
 
