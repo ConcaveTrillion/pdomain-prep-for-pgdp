@@ -24,9 +24,11 @@ from __future__ import annotations
 import inspect
 import re
 
-from pd_prep_for_pgdp.core.models import PageConfigOverrides
+import pytest
+
+from pd_prep_for_pgdp.core.models import AlignmentOverride, PageConfigOverrides, PageType, ResolvedPageConfig
 from pd_prep_for_pgdp.core.pipeline.stage_registry import _REAL_CPU_IMPLS
-from pd_prep_for_pgdp.core.pipeline.stage_runner import STAGE_CONFIG_FIELDS
+from pd_prep_for_pgdp.core.pipeline.stage_runner import STAGE_CONFIG_FIELDS, _compute_config_hash
 
 
 def test_stage_config_fields_are_valid_overrides_field_names() -> None:
@@ -39,6 +41,53 @@ def test_stage_config_fields_are_valid_overrides_field_names() -> None:
                 f"but PageConfigOverrides has no such field. "
                 f"Valid fields: {sorted(valid)}"
             )
+
+
+def _make_cfg() -> ResolvedPageConfig:
+    return ResolvedPageConfig(
+        text_threshold=140,
+        page_h_w_ratio=1.65,
+        fuzzy_pct=0.02,
+        pixel_count_columns=150,
+        pixel_count_rows=75,
+        ocr_bbox_edge_min_words=5,
+        ocr_engine="doctr",
+        ocr_model_key=None,
+        ocr_dpi=150,
+        initial_crop_all=(0, 0, 0, 0),
+        ocr_crop=(0, 0, 0, 0),
+        page_type=PageType.normal,
+        alignment=AlignmentOverride.default,
+        initial_crop=None,
+        white_space_additional=None,
+        threshold_level=None,
+        skip_auto_deskew=True,
+        deskew_before_crop=None,
+        deskew_after_crop=None,
+        do_morph=False,
+        skip_denoise=False,
+        use_ocr_bbox_edge=False,
+        rotated_standard=False,
+        single_dimension_rescale=False,
+    )
+
+
+def test_compute_config_hash_raises_on_unknown_field() -> None:
+    """A misspelt field in STAGE_CONFIG_FIELDS must raise AttributeError, not silently hash None.
+
+    Without this guard, two stages with different (but typo'd) config fields
+    could produce identical hashes — causing reindex --heal to miss staleness.
+    """
+    cfg = _make_cfg()
+
+    # Temporarily inject a typo'd field to simulate a misspelling in STAGE_CONFIG_FIELDS.
+    test_stage = "_test_typo_stage"
+    STAGE_CONFIG_FIELDS[test_stage] = frozenset({"nonexistent_field_xyz_abc"})
+    try:
+        with pytest.raises(AttributeError):
+            _compute_config_hash(cfg, test_stage)
+    finally:
+        del STAGE_CONFIG_FIELDS[test_stage]
 
 
 def test_no_undeclared_config_field_accesses_in_stage_impls() -> None:

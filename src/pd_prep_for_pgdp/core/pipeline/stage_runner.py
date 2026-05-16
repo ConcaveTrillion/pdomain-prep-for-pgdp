@@ -67,7 +67,7 @@ import numpy as np
 
 from ...adapters.database.base import IDatabase
 from ...adapters.storage.base import IStorage
-from ..models import PageRecord, PageStageState, PageStageStatus
+from ..models import PageRecord, PageStageState, PageStageStatus, ResolvedPageConfig
 from ..stage_events import StageEventBroker, stage_events_key
 from . import stage_dag as _stage_dag_module
 from .page_stage_writer import (
@@ -158,7 +158,7 @@ class StageRunFailed(RuntimeError):  # noqa: N818  # intentional: describes the 
 # Stages absent from this map read no per-page config fields.
 STAGE_CONFIG_FIELDS: dict[str, frozenset[str]] = {
     "initial_crop": frozenset({"initial_crop"}),
-    "manual_deskew_pre": frozenset({"deskew_before_crop", "manual_deskew_angle"}),
+    "manual_deskew_pre": frozenset({"deskew_before_crop"}),
     "threshold": frozenset({"threshold_level"}),
     "find_content_edges": frozenset({"fuzzy_pct", "pixel_count_columns", "pixel_count_rows"}),
     "crop_to_content": frozenset({"white_space_additional"}),
@@ -170,7 +170,7 @@ STAGE_CONFIG_FIELDS: dict[str, frozenset[str]] = {
 }
 
 
-def _compute_config_hash(cfg: Any, stage_id: str) -> str | None:
+def _compute_config_hash(cfg: ResolvedPageConfig, stage_id: str) -> str | None:
     """sha256 of the resolved config fields relevant to ``stage_id``.
 
     Returns ``None`` when ``stage_id`` has no entry in ``STAGE_CONFIG_FIELDS``
@@ -179,7 +179,7 @@ def _compute_config_hash(cfg: Any, stage_id: str) -> str | None:
     fields = STAGE_CONFIG_FIELDS.get(stage_id)
     if not fields:
         return None
-    subset = {f: getattr(cfg, f, None) for f in sorted(fields)}
+    subset = {f: getattr(cfg, f) for f in sorted(fields)}
     return hashlib.sha256(json.dumps(subset, default=str).encode()).hexdigest()
 
 
