@@ -21,7 +21,7 @@ class ApiError(BaseModel):
     details: Any = None
 
 
-def install_error_handlers(app: FastAPI) -> None:
+def install_error_handlers(app: FastAPI, *, debug: bool = False) -> None:
     @app.exception_handler(StarletteHTTPException)
     async def _http_exc(request: Request, exc: StarletteHTTPException) -> JSONResponse:
         return JSONResponse(
@@ -46,11 +46,12 @@ def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
         log.exception("unhandled exception in %s %s", request.method, request.url.path)
+        details = traceback.format_exc().splitlines()[-3:] if debug else None
         return JSONResponse(
             status_code=500,
             content=ApiError(
                 error="internal_error",
                 message=str(exc) or exc.__class__.__name__,
-                details=traceback.format_exc().splitlines()[-3:],
+                details=details,
             ).model_dump(),
         )

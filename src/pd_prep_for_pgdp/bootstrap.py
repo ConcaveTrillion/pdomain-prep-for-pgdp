@@ -255,7 +255,7 @@ def build_app(settings: Settings | None = None) -> FastAPI:
     app.state.dispatcher = dispatcher
     app.state.job_runner = job_runner
 
-    install_error_handlers(app)
+    install_error_handlers(app, debug=settings.debug)
     install_auth_routes(app)
     install_data_routes(app)
     install_gpu_routes(app)

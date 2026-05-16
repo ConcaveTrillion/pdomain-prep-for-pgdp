@@ -86,6 +86,10 @@ class Settings(BaseSettings):
 
     None = ``4 x resolved pool_size``. Override: ``PGDP_STAGE_WRITE_QUEUE_CAP``."""
 
+    # ── Debug ────────────────────────────────────────────────────────────────
+    debug: bool = False
+    """When True, 500 responses include last 3 lines of traceback. Never enable in production."""
+
     # ── Mode flag (for shared GPU worker container) ──────────────────────────
     mode: Literal["full", "gpu_worker_only"] = "full"
 
