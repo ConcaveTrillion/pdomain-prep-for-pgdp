@@ -3,12 +3,19 @@
 `OcrPageRequest.engine` was already on the wire shape, but the ocr_page
 function ignored it and always trusted `cfg.ocr_engine`. These tests lock
 in that the kwarg now overrides the resolved config for that one call.
+
+Also covers narrowed exception handling added in Task 5:
+- `_detect_torch_device` must not silently swallow RuntimeError from CUDA.
+- `OcrPageResult.words_error` surfaces Tesseract bbox failures to callers.
 """
 
 from __future__ import annotations
 
+import logging
+import sys
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -90,3 +97,94 @@ def test_no_engine_kwarg_uses_resolved_config(monkeypatch: pytest.MonkeyPatch) -
         system=SystemDefaults(),
     )
     assert captured["used"] == "tesseract"
+
+
+# ─── Task 5: Narrowed exception handling ────────────────────────────────────
+
+
+def test_detect_torch_device_returns_cpu_on_cuda_runtime_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """RuntimeError from cuda.is_available() must be logged at WARNING, not silently swallowed."""
+    from pd_prep_for_pgdp.core import ocr as ocr_module
+
+    mock_torch = MagicMock()
+    mock_torch.cuda.is_available.side_effect = RuntimeError("CUDA driver not loaded")
+
+    with (
+        patch.dict(sys.modules, {"torch": mock_torch}),
+        caplog.at_level(logging.WARNING, logger="pd_prep_for_pgdp.core.ocr"),
+    ):
+        result = ocr_module._detect_torch_device()
+
+    assert result == "cpu"
+    assert any("CUDA" in r.message and r.levelno == logging.WARNING for r in caplog.records), (
+        f"Expected a WARNING mentioning CUDA, got: {[r.message for r in caplog.records]}"
+    )
+
+
+def test_detect_torch_device_import_error_returns_cpu() -> None:
+    """If torch is not importable, _detect_torch_device must return 'cpu' silently."""
+    from pd_prep_for_pgdp.core import ocr as ocr_module
+
+    # Temporarily hide torch from sys.modules.
+    saved = sys.modules.pop("torch", None)
+    try:
+        with patch.dict(sys.modules, {"torch": None}):  # type: ignore[dict-item]
+            result = ocr_module._detect_torch_device()
+    finally:
+        if saved is not None:
+            sys.modules["torch"] = saved
+
+    assert result == "cpu"
+
+
+def test_ocr_page_result_has_words_error_field() -> None:
+    """OcrPageResult must expose a words_error field (None by default)."""
+    from pd_prep_for_pgdp.core.ocr import OcrPageResult
+
+    r = OcrPageResult(text="hello", words=[], page=None)
+    assert r.words_error is None
+
+
+def test_tesseract_image_to_data_failure_sets_words_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """When image_to_data raises, the result must carry words_error and words=[]."""
+    from pd_prep_for_pgdp.core import ocr as ocr_module
+
+    # Create a tiny real image so PIL.Image.open succeeds.
+    img_path = tmp_path / "test.png"
+    try:
+        from PIL import Image  # type: ignore[import-not-found]
+
+        img = Image.new("L", (10, 10), color=255)
+        img.save(img_path)
+    except ImportError:
+        pytest.skip("Pillow not installed")
+
+    import types
+
+    fake_pytesseract = types.ModuleType("pytesseract")
+    fake_pytesseract.image_to_string = lambda img, config="": "some text"  # type: ignore[attr-defined]
+    fake_pytesseract.image_to_data = MagicMock(  # type: ignore[attr-defined]
+        side_effect=RuntimeError("Tesseract segfault simulation")
+    )
+
+    class _Output:
+        DICT = "dict"
+
+    fake_pytesseract.Output = _Output()  # type: ignore[attr-defined]
+
+    monkeypatch.setitem(sys.modules, "pytesseract", fake_pytesseract)
+
+    result = ocr_module._ocr_page_tesseract(
+        img_path,
+        cfg=_cfg(engine="tesseract"),
+        system=SystemDefaults(),
+    )
+
+    assert result.words == []
+    assert result.words_error is not None
+    assert "RuntimeError" in result.words_error

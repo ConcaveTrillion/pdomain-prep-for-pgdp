@@ -69,13 +69,24 @@ def _detect_torch_device() -> str:
     """Pick the best available torch device (CUDA -> MPS -> CPU)."""
     try:
         import torch  # type: ignore[import-not-found]
+    except ImportError:
+        return "cpu"
 
+    try:
         if torch.cuda.is_available():
             return "cuda"
-        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    except RuntimeError:
+        log.warning("CUDA availability check raised RuntimeError; falling back to CPU", exc_info=True)
+        return "cpu"
+
+    try:
+        from torch.backends import mps  # type: ignore[import-not-found]
+
+        if mps.is_available():
             return "mps"
-    except Exception:
+    except ImportError:
         pass
+
     return "cpu"
 
 
@@ -184,6 +195,7 @@ class OcrPageResult:
     pre_reorg_word_count: int = 0
     post_reorg_word_count: int = 0
     dropped_word_count: int = 0
+    words_error: str | None = None  # set when bbox extraction fails (Tesseract path)
 
 
 def ocr_page(
@@ -324,8 +336,18 @@ def _ocr_page_tesseract(
                     ),
                 )
             )
-    except Exception:
-        log.exception("Tesseract image_to_data failed (returning text only)")
+    except Exception as exc:
+        log.exception("Tesseract image_to_data failed; returning text-only result")
+        return OcrPageResult(
+            text=text,
+            words=[],
+            page=None,
+            layout_regions=0,
+            pre_reorg_word_count=0,
+            post_reorg_word_count=0,
+            dropped_word_count=0,
+            words_error=f"{type(exc).__name__}: {exc}",
+        )
 
     return OcrPageResult(
         text=text,
