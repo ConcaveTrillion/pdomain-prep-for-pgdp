@@ -2,32 +2,33 @@
 
 > **Authoritative spec:** the pipeline is a per-page DAG of named
 > stages, defined in
-> [`docs/specs/pipeline-task-model.md`](specs/pipeline-task-model.md)
-> and described stage-by-stage in `specs/02-pipeline-steps.md`. This
-> doc is a code-level guide to where each stage's implementation lives
-> today and how OCR mirrors `pd-ocr-cli`. Step IDs from the legacy
-> step-numbered model are kept for transition; see spec 02 §Step-numbered
-> legacy mapping for the stage-to-step crosswalk.
+> [`../specs/pipeline-task-model.md`](../specs/pipeline-task-model.md)
+> and described stage-by-stage in `specs/02-pipeline-steps.md`. M1–M6
+> are all shipped (see `../08-roadmap-shipped.md`); per AD-7,
+> `STAGE_IMPL[stage_id][device]` in `core/pipeline/stage_registry.py`
+> is the only execution path. This doc is a code-level guide to where
+> each stage's implementation lives today and how OCR mirrors
+> `pd-ocr-cli`.
 
 ## Stage-to-code map
 
-The canonical spec describes 16 per-page stages plus project-level
+The canonical spec describes 22 per-page stages plus project-level
 orchestration tasks. Today's code lives at:
 
-| Stage / task | Code | Status |
-|---|---|---|
-| `project.ingest` | `core/ingest.py` `ingest_source()` | ✅ shipped (still under legacy "Step 0") |
-| `ingest_source` (per-page) | `core/ingest.py` (root pages); split-child path lands in M1 | ✅ root / 🟡 child |
-| `thumbnail` | `core/ingest.py` `_make_thumbnail_bytes()` (in-memory) | ✅ |
-| `auto_detect_attrs` / `auto_detect_illustrations` | `core/auto_detect.py` / `core/illustrations.auto_detect_illustrations` | ✅ |
-| `decode_source` … `canvas_map` (the proofing chain) | bundled in `core/pipeline/process_page.py` `process_page_cpu()` today; M2 unbundles into `STAGE_IMPL[...]['cpu']` entries | 🟡 bundled |
-| `blank_proof_synth` | `core/pipeline/blank_proof.py` | ✅ |
-| `ocr_crop` | `core/pipeline/crop_for_ocr.py` | ✅ |
-| `extract_illustrations` | `core/illustrations.py` (extract + auto-detect) | ✅ |
-| `ocr` | `core/ocr.py` (mirrors pd-ocr-cli) | ✅ |
-| `text_postprocess` | `core/text_postprocess.py` | ✅ |
-| `text_review` (gate) | `PATCH /pages/{idx0}/text` (edit) + `POST /api/pages/{id}/text_review/clean` (attest); the explicit gate route lands in M2 | 🟡 partial |
-| `project.build_package` | `core/packaging.py`; the `awaiting_review` parking state lands in M5 | 🟡 partial |
+| Stage / task | Code |
+|---|---|
+| `project.ingest` (root) | `core/ingest.ingest_source()` |
+| `thumbnail` | `core/ingest._make_thumbnail_bytes()` (in-memory, `ProcessPoolExecutor` per AD-9) |
+| `auto_detect_attrs` | `core/auto_detect.detect_page_attributes` |
+| `auto_detect_illustrations` | `core/illustrations.auto_detect_illustrations` |
+| Proofing-chain stages (`decode_source` → `initial_crop` → `manual_deskew_pre` → `grayscale` → `threshold` → `invert` → `find_content_edges` → `crop_to_content` → `auto_deskew` → `morph_fill` → `rescale` → `canvas_map`) | Individual entries in `STAGE_IMPL[stage_id]["cpu"]` (`core/pipeline/stage_registry.py`); each calls a `pd_book_tools.image_processing.cv2_processing` primitive |
+| `blank_proof_synth` | `core/pipeline/blank_proof.py` |
+| `ocr_crop` | `core/pipeline/crop_for_ocr.py` |
+| `extract_illustrations` | `core/illustrations.py` (extract + auto-detect) |
+| `ocr` | `core/ocr.py` (mirrors pd-ocr-cli) |
+| `text_postprocess` | `core/text_postprocess.py` |
+| `text_review` (gate) | `PATCH /api/data/projects/{id}/pages/{idx0}/text` (edit), `DELETE .../words` + `POST .../words/restore` (word edits), then attest via `text_review` stage run |
+| `project.build_package` | `core/packaging.py`; parks in `awaiting_review` job state when any proof-range page is un-attested, auto-resumes when the gate clears (canonical spec Q7) |
 
 ## Step 0 — `ingest_source`
 
@@ -58,33 +59,32 @@ Corrupt entries land in `IngestResult.errors` without aborting the batch.
 After the loop, if any pages were ingested and `auto_detect=True`, the median
 `height/width` ratio is recorded into `Project.config.default_overrides["page_h_w_ratio"]`.
 
-## Stage 4 sub-chain — proofing chain (CPU implementation)
+## Proofing chain — per-stage `STAGE_IMPL` entries
 
-The proofing-chain stages (`decode_source` → `initial_crop` →
+Each proofing-chain step (`decode_source` → `initial_crop` →
 `manual_deskew_pre` → `grayscale` → `threshold` → `invert` →
 `find_content_edges` → `crop_to_content` → `auto_deskew` → `morph_fill` →
-`rescale` → `canvas_map`) are currently bundled in
-`process_page_cpu(source_image_bytes, cfg: ResolvedPageConfig)` —
-a single function that runs the whole chain in sequence using
-`pd_book_tools.image_processing.cv2_processing` primitives. The
-function returns `ProcessPageOutput(proofing_png, pre_ocr_png, height,
-width)`.
+`rescale` → `canvas_map`) is an individual entry in `STAGE_IMPL[stage_id]["cpu"]`
+(`core/pipeline/stage_registry.py`). `StageRunner` walks the DAG calling
+each one with the in-memory upstream artifact, then routes the result
+through `commit_stage_artifact` (`core/pipeline/page_stage_writer.py`)
+for dual-write to disk + `page_stages` row (AD-2).
 
-M2 introduces the `STAGE_IMPL[stage_id][device]` registry (canonical
-spec Q5) — each sub-step gets a registered callable and the runner
-walks the DAG calling them individually with in-memory artifacts. M5
-routes every existing call through the registry; M6 deletes
-`process_page_cpu` outright (the project-level "run all CPU stages
-in a row" path becomes an imperative composition of registry calls).
+When the user requests a single stage with `mode=from`, the runner cascades
+to descendants by walking `stage_dag.py`'s parent→child graph and re-running
+every reachable dirty stage. Eager dirty propagation on a single-stage run
+marks every downstream `clean`/`failed` row `dirty` synchronously
+(canonical spec Q4).
 
-For `page_type ∈ {blank, plate_b, plate_r}` the function short-circuits to a
-canonical-aspect blank PNG (`blank_proof.create_blank_proof`) — this is
-the `blank_proof_synth` stage in the canonical DAG.
+For `page_type ∈ {blank, plate_b, plate_r}` the registry short-circuits to
+`blank_proof.create_blank_proof` (canonical-aspect blank PNG) — this is the
+`blank_proof_synth` stage.
 
-The GPU path (`adapters/gpu/local.py`) is a thin subclass of `CpuBackend`
-(DocTR / PyTorch auto-pick `cuda:0`). `pd_book_tools.image_processing.cupy_processing`
-primitives are still owed for the Step-4 image-processing fast path — see
-roadmap M2/M5 for when they wire up via the registry's `"cuda"` entries.
+A GPU fast path is not yet shipped: every `STAGE_IMPL[stage_id]` only has a
+`"cpu"` entry today. A `"cuda"` device key backed by
+`pd_book_tools.image_processing.cupy_processing` primitives is parked under
+roadmap §D5 (Deferred — remote / cloud mode); the registry is already the
+only call path so wiring it would be additive.
 
 ## Stage `ocr_crop` — crop for OCR
 

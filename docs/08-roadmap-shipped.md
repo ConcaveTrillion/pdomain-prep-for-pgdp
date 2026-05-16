@@ -598,7 +598,7 @@ and then re-runs `make dev-local` to restore the editable sibling.
 marker; `make remove-venv` (and therefore `reset`) drops it with the
 venv. Canonical-mode behavior unchanged.
 
-Spec: `docs/dev-local-upgrade-flow.md`. Tests: 13 in
+Spec: `docs/architecture/dev-local-upgrade-flow.md`. Tests: 13 in
 `tests/test_detect_dev_local.py` exercising the script with a faked
 `uv` on PATH (subprocess shells to `python scripts/detect_dev_local.py`
 in a tmp dir with a stub `uv` shell script + isolated `.venv/`).

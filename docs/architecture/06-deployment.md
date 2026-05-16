@@ -113,14 +113,14 @@ GPU charges are ~$2/book; rest is Fargate (~$10) + Aurora (~$45) + S3 (~$5).
 
 ## CI
 
-`.github/workflows/release.yml` runs on push to main and on tag push:
+Two workflows:
 
-| Job | When | What |
-|---|---|---|
-| `test` | every push | uv sync + ruff + pytest |
-| `build-frontend` | every push | npm install + `vite build`; uploads `dist/` |
-| `build-wheel` | every push (after test + build-frontend) | `uv build --wheel` with frontend bundled into the wheel; on tag push, attaches the wheel to the GitHub Release |
-| `build-container` | tag push only | docker build (no push wired up — user's ECR config) |
+| Workflow | When | Job | What |
+|---|---|---|---|
+| `.github/workflows/ci.yml` | every push + PR | `ci` | `make ci AI=1` — setup + frontend-install + pre-commit + openapi-export + frontend-build + pytest + frontend-format-check + frontend-lint + vitest |
+| `.github/workflows/release.yml` | every push to main + tag push | `build-frontend` | npm install + ESLint + Prettier + Vitest + `vite build`; uploads `dist/` |
+| `.github/workflows/release.yml` | every push (after `build-frontend`) | `build-wheel` | `uv build --wheel` with frontend bundled into the wheel; CI guard `Verify wheel contains SPA bundle` (roadmap §22); on tag push, attaches the wheel to the GitHub Release |
+| `.github/workflows/release.yml` | tag push only | `build-container` | docker build (no push wired up — registry push parked under roadmap §D4) |
 
 ## Frontend bundling
 
@@ -139,9 +139,12 @@ on port 5173 owns `/` while FastAPI owns `/api/*` and `/cdn/*`.
 
 ## What's not deployed yet
 
+All parked under roadmap "Deferred — remote / cloud mode":
+
 - **Modal app deploy** — the user runs `modal deploy
-  src/pd_prep_for_pgdp/adapters/gpu/modal_app.py` themselves; CI doesn't.
-- **install.sh exercise** — we haven't actually run it in a clean shell to
-  verify the curl-pipe-sh flow works end-to-end. Logged for the user.
-- **Git remote** — repo isn't a git repo yet. `git init` + remote create
-  is the user's call (decision logged in iteration 1).
+  src/pd_prep_for_pgdp/adapters/gpu/modal_app.py` themselves; CI doesn't (§D1).
+- **install.sh end-to-end exercise** — `install.sh` carries the same latent
+  wheel-METADATA bug pre-fixed in `pd-ocr-cli`; fix before exercising the
+  curl-pipe-sh path (AD-10, §D3).
+- **Registry push** — `release.yml`'s `build-container` job builds but
+  doesn't push (§D4).

@@ -65,9 +65,13 @@ src/pd_prep_for_pgdp/
 │   ├── auto_detect.py      # spec-01 page-attribute heuristics
 │   ├── ingest.py           # Step 0/1/2 — extract zip, thumbnails, page records
 │   ├── pipeline/
-│   │   ├── process_page.py # Step 4 (CPU path: 4c–4o) using cv2_processing
-│   │   ├── crop_for_ocr.py # Step 6
-│   │   └── blank_proof.py  # Step 4b
+│   │   ├── stage_dag.py            # Per-page stage DAG (AD-1, spec pipeline-task-model)
+│   │   ├── stage_registry.py       # STAGE_IMPL[stage_id][device] — only execution path (AD-7)
+│   │   ├── stage_runner.py         # Runs a single stage; dirty-cascades descendants
+│   │   ├── stage_write_executor.py # Bounded ThreadPool + semaphore (AD-6)
+│   │   ├── page_stage_writer.py    # commit_stage_artifact{,_multi} dual-write (AD-2)
+│   │   ├── crop_for_ocr.py         # ocr_crop stage
+│   │   └── blank_proof.py          # blank_proof_synth stage
 │   ├── ocr.py              # mirrors pd-ocr-cli OCR flow
 │   ├── illustrations.py    # extract_illustration + auto-detect via layout model
 │   ├── text_postprocess.py # Step 8 — quotes, scannos, hyphenation, regex
@@ -81,7 +85,7 @@ src/pd_prep_for_pgdp/
 │   ├── storage/{base,filesystem,s3}.py
 │   ├── database/{base,sqlite}.py        # postgres deferred
 │   ├── auth/{base,none_,apikey,jwt_}.py
-│   └── gpu/{base,cpu,local,modal_backend,modal_app,shared_container}.py
+│   └── gpu/{base,modal_backend,modal_app,shared_container}.py  # cpu/local deleted M6 (AD-7)
 │
 ├── dispatcher/{base,immediate,batched}.py
 │
@@ -90,9 +94,11 @@ src/pd_prep_for_pgdp/
     ├── cdn.py                       # PUT /cdn/{key:path} (filesystem upload)
     ├── env_js.py                    # GET /env.js (runtime config shim)
     ├── dependencies.py              # FastAPI deps (storage, db, auth, gpu, ...)
-    ├── data/{projects,pages,system_defaults,assets,jobs}.py
-    ├── gpu/{ingest,process_page,ocr,illustrations,jobs,schemas}.py
-    └── middleware/error_handler.py  # Uniform ApiError envelope
+    ├── data/{projects,pages,system_defaults,assets,jobs,pipeline,search}.py
+    ├── gpu/{ingest,illustrations,jobs,schemas}.py   # legacy process-page/ocr routes deleted M6
+    ├── healthz.py
+    ├── server_info.py
+    └── middleware/{error_handler,request_id}.py  # Uniform ApiError envelope + X-Request-Id
 ```
 
 ## What changes between deployment shapes
@@ -114,7 +120,7 @@ the FastAPI app. Everything in `core/` and `api/` is shape-agnostic.
 
 - **Backend** (Python 3.13): FastAPI, uvicorn, pydantic, pydantic-settings,
   sse-starlette, anyio, huggingface_hub, transformers, **pd-book-tools** (the
-  shared OCR/geometry/image-processing primitive lib pinned to v0.7.3).
+  shared OCR/geometry/image-processing primitive lib pinned to v0.9.0).
   Optional extras: `[s3]` boto3, `[postgres]` psycopg + SQLAlchemy,
   `[modal]` modal, `[jwt]` pyjwt, `[cuda]` cupy + nvimgcodec.
 - **Frontend** (Node 20): React 19, Vite, TypeScript, TanStack Query v5,

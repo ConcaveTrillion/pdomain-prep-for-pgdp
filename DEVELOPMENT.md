@@ -139,11 +139,11 @@ make test
 uv run pytest tests/ -v
 ```
 
-Expected: 128 passed in ~12 s. Tests run with `gpu_backend="cpu"` and
+Expected: ~800 tests passing. Tests run with `gpu_backend="cpu"` and
 `storage_backend="filesystem"` by default — no Node, no Modal, no GPU
 hardware required.
 
-The full suite is documented in [`docs/07-testing.md`](docs/07-testing.md).
+The full suite is documented in [`docs/architecture/07-testing.md`](docs/architecture/07-testing.md).
 
 ## Lint / format
 
@@ -208,7 +208,7 @@ pd-prep-for-pgdp/
 | 08 — Data models | `core/models.py` |
 | 09 — Deployment | `Dockerfile`, `install.sh`, `Makefile`, `.github/workflows/` |
 
-See [`docs/01-overview.md`](docs/01-overview.md) for the full module tour.
+See [`docs/architecture/01-overview.md`](docs/architecture/01-overview.md) for the full module tour.
 
 ## CI
 

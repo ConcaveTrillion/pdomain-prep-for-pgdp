@@ -93,10 +93,15 @@ uniform across pd-ocr-cli, pd-ocr-labeler-spa, pd-ocr-trainer, and
 pd-prep-for-pgdp — a single shared detection script could eventually
 live in `pd-book-tools` itself or in a workspace-level helper.
 
+## Status
+
+**Shipped.** `Makefile` `upgrade-deps` refuses with the message above when
+`scripts/detect_dev_local.py` detects an editable `pd-book-tools` install;
+`upgrade-deps-local` upgrades then re-runs `make dev-local`. Tests live in
+`tests/test_detect_dev_local.py`. The `.venv/.dev-local` marker is written
+by `dev-local` / `install-local` (`Makefile` lines 301–311).
+
 ## Related
 
 - Workspace decision recorded in agent-memory under
   `.claude/agent-memory/<agent>/` for each pd-* repo.
-- This document is **spec only.** Implementation is tracked as a
-  P4 roadmap item (`docs/08-roadmap.md` § "Guard `upgrade-deps`
-  against silent dev-local revert").

@@ -1,42 +1,57 @@
-# pd-prep-for-pgdp — Architecture Docs
+# pd-prep-for-pgdp — Docs
 
-These docs describe **what's actually built**. They complement the design specs
-in [`../specs/`](../specs/) (which capture the *target* design).
+Three kinds of docs live here:
+
+1. **[`architecture/`](architecture/)** — "this is how the system works now."
+   Reference docs for the as-shipped code. Validated against source.
+2. **[`specs/`](specs/)** — design docs and proposals. Authoritative for
+   *intent*; the architecture docs are authoritative for *as-built*.
+3. **Roadmap** — open work in [`08-roadmap.md`](08-roadmap.md); chronological
+   shipped log in [`08-roadmap-shipped.md`](08-roadmap-shipped.md).
+
+## Architecture reference (`architecture/`)
 
 | Doc | Topic |
 |---|---|
-| [`01-overview.md`](01-overview.md) | The 30-second tour: what runs where |
-| [`02-backend.md`](02-backend.md) | FastAPI app, adapters, settings, lifespan |
-| [`03-pipeline.md`](03-pipeline.md) | Steps 0–10, job runner, dispatcher, OCR |
-| [`04-frontend.md`](04-frontend.md) | React SPA pages, state, auth |
-| [`05-events-and-jobs.md`](05-events-and-jobs.md) | Job events, SSE, in-process priority queue |
-| [`06-deployment.md`](06-deployment.md) | Local / self-hosted / managed shapes |
-| [`07-testing.md`](07-testing.md) | TDD conventions, test layout, what's covered |
-| [`08-roadmap.md`](08-roadmap.md) | What's done + what's next, by priority |
-| [`futures/`](futures/) | Future-state design notes (not current milestones) |
+| [`architecture/01-overview.md`](architecture/01-overview.md) | The 30-second tour: what runs where |
+| [`architecture/02-backend.md`](architecture/02-backend.md) | FastAPI app, adapters, settings, lifespan |
+| [`architecture/03-pipeline.md`](architecture/03-pipeline.md) | Per-page stage DAG, OCR, packaging |
+| [`architecture/04-frontend.md`](architecture/04-frontend.md) | React SPA pages, state, auth |
+| [`architecture/05-events-and-jobs.md`](architecture/05-events-and-jobs.md) | Job events, SSE, in-process priority queue |
+| [`architecture/06-deployment.md`](architecture/06-deployment.md) | Local / self-hosted / managed shapes |
+| [`architecture/07-testing.md`](architecture/07-testing.md) | TDD conventions, test layout, what's covered |
+| [`architecture/architecture-decisions.md`](architecture/architecture-decisions.md) | Locked decisions (AD-1 … AD-10) |
+| [`architecture/dev-local-upgrade-flow.md`](architecture/dev-local-upgrade-flow.md) | `dev-local`-aware `upgrade-deps` guard |
 
-## Status snapshot
+## Specs (`specs/`)
 
-- **~381 tests collected** in `tests/` — run via `make test` (excludes
-  `tests/e2e/`). The Vitest SPA suite (`make frontend-test`) sits alongside
-  it with **61+ tests**; both are wired into `make ci`.
-- **Backend** is feature-complete relative to specs 01/02/04/05/07/08; the CPU
-  pipeline is wired end-to-end (ingest → process_page → ocr → text_postprocess
-  → package), with auto-detect + layout-aware OCR via `pd-book-tools`.
-- **Frontend** covers every spec-03 page (ProjectList, ProjectConfigure,
-  PageWorkbench, TextReview, ReviewQueue, Jobs, Settings, Login). Vitest +
-  msw harness landed (roadmap §9); pure-function and wire-level coverage in
-  place for `lineDiff`, `wordOffsets`, `marquee`, `api/client`, `api/pages`,
-  `api/workbench`, `WordBboxOverlay`, `ProjectListPage`, `TextReviewPage`.
-- **Adapters fully wired:** `IStorage` (filesystem + S3), `IDatabase` (SQLite),
-  `IAuth` (none / apikey / jwt), `GPUBackend` (CPU + Modal dispatcher).
-- **Adapters scaffolded (raise `NotImplementedError`):** Postgres database
-  adapter is not yet written (P0 #2), Modal-side function bodies in
-  `adapters/gpu/modal_app.py` (P0 #1), `adapters/gpu/local.py` CUDA path,
-  `adapters/gpu/shared_container.py`.
-- **Operations:** structured logging + request-id correlation
-  (roadmap §18), `GET /healthz` liveness probe (§19), CI guard that the
-  built wheel contains the SPA bundle (§22) all landed.
+Design docs for in-flight or recently-landed features. The pipeline
+task-model spec ([`specs/pipeline-task-model.md`](specs/pipeline-task-model.md))
+is the long-form record behind AD-1 — treat it as a canonical reference,
+not a draft.
+
+## Other directories
+
+- [`design-brief/`](design-brief/) — design-system brief for the hi-fi
+  redesign (active).
+- [`futures/`](futures/) — future-state design notes (not current milestones).
+- [`superpowers/plans/`](superpowers/plans/) — superpowers-skill plan
+  artifacts.
+
+## How to read these docs
+
+Specs in [`specs/`](specs/) are the **source of truth for design**. Docs in
+[`architecture/`](architecture/) are about **the actual code** and may diverge
+from the spec when an intentional decision was made; those divergences are
+called out explicitly.
+
+For a new contributor (or AI assistant), the recommended reading order:
+
+1. [`../CLAUDE.md`](../CLAUDE.md) — quick start
+2. [`architecture/01-overview.md`](architecture/01-overview.md) — high-level shape
+3. [`architecture/architecture-decisions.md`](architecture/architecture-decisions.md) — locked decisions
+4. [`08-roadmap.md`](08-roadmap.md) — what to work on next
+5. The spec for whatever layer you're touching, then the architecture doc for that layer
 
 ## Spec ↔ implementation index
 
@@ -44,24 +59,11 @@ in [`../specs/`](../specs/) (which capture the *target* design).
 |---|---|
 | 00 — Overview | Architecture matches; "single FastAPI process" delivered. |
 | 01 — Configuration model | `core/models.py`, `core/config_resolver.py`, `core/prefix.py`. |
-| 02 — Pipeline steps | `core/ingest.py`, `core/pipeline/{process_page,crop_for_ocr,blank_proof}.py`, `core/text_postprocess.py`, `core/illustrations.py`, `core/packaging.py`. |
+| 02 — Pipeline steps | `core/ingest.py`, `core/pipeline/{stage_dag,stage_registry,stage_runner,crop_for_ocr,blank_proof}.py`, `core/text_postprocess.py`, `core/illustrations.py`, `core/packaging.py`. Proofing-chain sub-steps are individual `STAGE_IMPL` entries (AD-7). |
 | 03 — UI layout | `frontend/src/pages/*.tsx`. |
-| 04 — GPU acceleration | `adapters/gpu/{base,cpu,modal_backend,modal_app,local,shared_container}.py`. CPU + Modal scaffold are tested; CUDA + shared-container are scaffolds only. |
+| 04 — GPU acceleration | `adapters/gpu/{base,modal_backend,modal_app,shared_container}.py` + `bootstrap._NoOpGPUBackend`. CPU/Local backends deleted M6 — per-page stages run through `STAGE_IMPL[stage_id][device]`. |
 | 05 — Illustrations | `core/illustrations.py` + `auto_detect_illustrations` in ingest. |
-| 06 — Page workbench | `frontend/src/pages/PageWorkbenchPage.tsx` (Konva + drag-create + drag-resize). |
-| 07 — API design | `api/data/`, `api/gpu/`, `api/auth/`, `api/cdn.py`, `api/env_js.py`. |
+| 06 — Page workbench | `frontend/src/pages/PageWorkbenchPage.tsx` (Konva + drag-create + drag-resize + rotate handle). |
+| 07 — API design | `api/data/`, `api/gpu/`, `api/auth/`, `api/cdn.py`, `api/env_js.py`, `api/healthz.py`, `api/server_info.py`. |
 | 08 — Data models | `core/models.py` (every model from spec 08). |
-| 09 — Deployment | `Dockerfile`, `install.sh`, `install.ps1`, `Makefile`, `.github/workflows/release.yml`. |
-
-## How to read these docs
-
-Specs in [`../specs/`](../specs/) are the **source of truth for design**. These
-docs are about **the actual code** and may diverge from the spec when an
-intentional decision was made; those divergences are called out explicitly.
-
-For a new contributor (or AI assistant), the recommended reading order:
-
-1. [`../CLAUDE.md`](../CLAUDE.md) — quick start
-2. [`01-overview.md`](01-overview.md) — high-level shape
-3. [`08-roadmap.md`](08-roadmap.md) — what to work on next
-4. The spec for whatever layer you're touching, then the docs for that layer
+| 09 — Deployment | `Dockerfile`, `install.sh`, `install.ps1`, `Makefile`, `.github/workflows/{ci,release}.yml`. |

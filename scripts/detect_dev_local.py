@@ -6,7 +6,7 @@ Exit code:
     0 — dev-local detected (editable sibling install / marker file / env override).
     1 — canonical (no editable sibling).
 
-Detection precedence (per ``docs/dev-local-upgrade-flow.md``):
+Detection precedence (per ``docs/architecture/dev-local-upgrade-flow.md``):
 
 1. ``uv pip show pd-book-tools`` reports an ``Editable project location:`` line.
 2. Marker file at ``.venv/.dev-local`` exists.

@@ -9,10 +9,12 @@
 - Tailwind for styling.
 - `frontend/src/api/client.ts` is a thin typed `fetch` wrapper that reads
   the auth token from `getAuthToken()` (localStorage first, then
-  `window.__ENV__.API_TOKEN`).
-- `frontend/src/api/types.ts` is a hand-written subset of `/openapi.json`.
-  When npm is available, `make openapi-export` regenerates it via
-  `openapi-typescript`.
+  `(globalThis as any).__ENV__.API_TOKEN` — `globalThis` rather than
+  `window` so the module imports cleanly in jsdom tests).
+- `frontend/src/api/types.ts` is regenerated from `/openapi.json` via
+  `make openapi-export` (`openapi-typescript`). The committed `openapi.json`
+  at repo root is the contract source; `tests/test_openapi_spec_committed.py`
+  guards it against drift.
 
 ## Pages
 
@@ -20,8 +22,9 @@
 |---|---|---|
 | `/` | `ProjectListPage` | List + create + delete. Create flow: POST project → XHR PUT zip → POST ingest → poll job → navigate. |
 | `/projects/:id` | `ProjectConfigurePage` | Inline rename, Book Settings ranges + layout-confidence slider, RunPipelinePanel + ProjectJobsFeed, BulkActions (page_type/alignment/re-process), PageGrid (thumbnails + status pills + select-to-bulk). Pages list uses `useInfiniteQuery` + `next_cursor`. |
-| `/projects/:id/pages/:idx0` | `PageWorkbenchPage` | Konva canvas with view/split/illustration modes. Drag to create rectangles; click to select; Konva Transformer + drag to resize/move. Right panels: Identity (page_type/alignment), Splits + Regions (delete), ConfigOverrides (3-state toggles + threshold/fuzzy/pixel-count inputs), Preview button (POST /api/gpu/process-page with `output_context="workbench"`). Per-page error banner when `processing_error` is set. |
-| `/projects/:id/pages/:idx0/review` | `TextReviewPage` | Split-pane: image left, editable textarea right. Split-suffix dropdown when the page has splits. Save → `PATCH /pages/{idx0}/text`. Re-OCR → `POST /api/gpu/run-ocr-page`. |
+| `/projects/:id/pages/:idx0` | `PageWorkbenchPage` | Konva canvas with view/split/illustration modes. Drag to create rectangles; click to select; Konva Transformer + drag to resize/move (rotate handle shipped #100; flip blocked per roadmap P2.1). Right side: `StageChainRail` (per-stage chips with inline thumbnails, M3), `ArtifactViewer` (side-by-side compare), `StageControlsPanel` (filters `ResolvedPageConfig` to fields the selected stage reads, served by `GET /api/data/pipeline/stages/{stage_id}/fields`). Per-page stage run via `POST .../stages/{stage_id}/run` (optional `?async=true` for slow stages — `run_page_stage` `JobType`). |
+| `/projects/:id/pages/:idx0/review` | `TextReviewPage` | Split-pane: image left, editable textarea right. Split-suffix dropdown when the page has splits. Save → `PATCH /api/data/projects/{id}/pages/{idx0}/text`. Re-OCR → `POST .../stages/ocr/run` against the page. Word-delete: `DELETE .../words` (hard or soft-flag); restore via `POST .../words/restore`. |
+| `/projects/:id/crops` | `CropsGridPage` | Per-project grid of OCR-crop thumbnails for batch crop review. |
 | `/projects/:id/review` | `ProjectReviewQueuePage` | Filtered list of pages with `?review_needed=true` (any non-complete output or processing_error). |
 | `/jobs` | `JobsPage` | Last 50 jobs across the owner. Status pill, type, project link, progress, error message. Cancel button (live status), Retry button (terminal error/cancelled). Auto-refreshes every 5s. |
 | `/settings` | `SettingsPage` | Full SystemDefaults editor (image processing, OCR, layout, scannos, hyphenation). Save / Export / Import / Reset buttons. |
@@ -93,14 +96,14 @@ let consumers switch on `type` instead of parsing `status`.
 - **Confirm-then-delete** in `ProjectListRow`: kebab `⋯` → "Delete project?
   Yes / Cancel" inline replacement.
 
-## What's deferred
+## What's shipped, what's deferred
 
-- **OpenAPI codegen** — the `make openapi-export` target works once the user
-  runs it; today the hand-written `types.ts` is what compiles. Roadmap §20
-  tracks wiring this into CI as a divergence guard.
-- **shadcn/ui + Radix adoption** — specs name shadcn/Radix, but the SPA
-  ships hand-rolled Tailwind on raw HTML today. Roadmap §13a tracks
-  closing the divergence (Dialog, AlertDialog, Toast, etc.).
-
-Vitest + msw harness is **landed** (roadmap §9 — toolchain, three
-target flows, mount-level tests). Run via `make frontend-test`.
+- **OpenAPI codegen + drift guard** — shipped. `make openapi-export`
+  regenerates `frontend/src/api/types.ts`; `tests/test_openapi_spec_committed.py`
+  fails CI if the committed `openapi.json` diverges from the FastAPI app.
+- **shadcn/ui + Radix adoption** — §13a shipped 2026-05-15. Dialog,
+  AlertDialog, Tooltip, Select, Popover, Collapsible, Badge are Radix
+  wrappers (TooltipProvider mounted in `App.tsx`); sonner provides toasts.
+- **Vitest + msw harness** — shipped. Run via `make frontend-test`. ~22
+  test files covering pure-function helpers, API clients, and mount-level
+  page tests.

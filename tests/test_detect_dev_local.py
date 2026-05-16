@@ -2,7 +2,7 @@
 
 The script exits 0 when a dev-local install of ``pd-book-tools`` is
 detected and 1 otherwise. Detection precedence (per
-``docs/dev-local-upgrade-flow.md``):
+``docs/architecture/dev-local-upgrade-flow.md``):
 
 1. ``uv pip show pd-book-tools`` reports an ``Editable project location:`` line.
 2. Marker file at ``.venv/.dev-local`` exists.

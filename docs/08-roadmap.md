@@ -1,11 +1,11 @@
 # 08 — Roadmap
 
 > Shipped items live in `08-roadmap-shipped.md`. Locked architecture
-> decisions live in `architecture-decisions.md`. This file is the
+> decisions live in `architecture/architecture-decisions.md`. This file is the
 > **forward** view of open work.
 
 **Local-first priority (locked 2026-05-07 — see AD-4 in
-`architecture-decisions.md`):** all P0 / P1 / P2 work below targets
+`architecture/architecture-decisions.md`):** all P0 / P1 / P2 work below targets
 the SQLite + filesystem + CPU shape. Cloud / remote items are parked
 under "Deferred — remote / cloud mode" at the bottom.
 
@@ -116,7 +116,7 @@ at offset 1 within zero-based numbering"), or is it a latent
 spec bug and the first frontmatter page should be `f001`?
 
 Current behavior is documented as locked in
-`architecture-decisions.md` §AD-5. `test_compute_prefix_basic_numbering`
+`architecture/architecture-decisions.md` §AD-5. `test_compute_prefix_basic_numbering`
 asserts `f000`. Either path is a one-line code or spec edit plus a
 deliberate test update.
 
@@ -204,11 +204,11 @@ CPU path dominates after storage I/O.
 
 ## How to pick up
 
-1. Read `docs/01-overview.md` for the high-level shape.
-2. Read `architecture-decisions.md` for the locked decisions.
+1. Read `docs/architecture/01-overview.md` for the high-level shape.
+2. Read `docs/architecture/architecture-decisions.md` for the locked decisions.
 3. Pick the lowest-numbered open item in this file. **Skip BLOCKED
    items unless you have a CT decision in writing.** Skip the
    "Deferred" section unless the user explicitly revives it.
-4. TDD-first when possible; the test recipe is in `docs/07-testing.md`.
+4. TDD-first when possible; the test recipe is in `docs/architecture/07-testing.md`.
 5. When you finish an item, **move it out** of this file into
    `08-roadmap-shipped.md` with a condensed summary + commit SHAs.

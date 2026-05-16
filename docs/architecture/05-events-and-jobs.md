@@ -37,7 +37,8 @@ serially on the worker thread (the GPU isn't safe to share across threads).
 shutdown so a missed `__aexit__` doesn't pin the process.
 
 `bootstrap.build_app` constructs one `SingleExecutor` and starts its drain
-loop in the lifespan handler. `CpuBackend` submits through it.
+loop in the lifespan handler. `StageRunner` (`core/pipeline/stage_runner.py`)
+submits through it for every CPU-bound stage call.
 
 ## `JobEventBroker`
 
@@ -79,25 +80,37 @@ away. Local + self-hosted modes use it.
 
 ## Job runner flow
 
+Live `JobType` values (`core/models.py`):
+
+```
+unzip                          # extract source archive
+thumbnails                     # generate per-page thumbnails (ProcessPool, AD-9)
+run_page_stage                 # async per-page stage run (?async=true on POST .../stages/{id}/run)
+project_run_dirty              # project fan-out: run every dirty stage on every page (M5)
+project_run_stage_all_pages    # project fan-out: run one stage on every page
+build_package                  # zip + parks in awaiting_review if proof-range page un-attested (Q7)
+```
+
 ```
 poll → claim queued job → mark running + emit progress
                                       │
                                       ▼
-                 ingest? → core.ingest.ingest_source(progress_cb=...)
+                 unzip? → core.ingest.ingest_source(progress_cb=...)
+                 thumbnails? → walk pages + generate (ProcessPool)
+                 run_page_stage? → StageRunner.run(stage_id, page, device)
+                 project_run_dirty? → walk pages × dirty stages × StageRunner.run
+                 project_run_stage_all_pages? → walk pages × one stage × StageRunner.run
                  build_package? → core.packaging.build_package
-                 batch_text_postprocess? → walk pages + write
-                 batch_extract_illustrations? → walk regions + write
-                 batch_process_pages?
-                 batch_ocr?
-                       │
-                       │   if dispatcher: enqueue + mark scheduled
-                       │                  (completion callback marks
-                       │                   complete on flush)
-                       │   else:          gpu.run_batch(items) inline
+                       │            (parks awaiting_review if proof-page un-attested)
                        ▼
                        success → mark complete + emit terminal event
                        failure → mark error + emit terminal event
 ```
+
+`JobStatus.awaiting_review` is the parked state for `build_package` jobs
+when any proof-range page lacks a clean `text_review` stage row. The
+review-status endpoint (`GET .../review-status`) returns the parked job
+id so the SPA can wake users.
 
 `max_concurrency=N` in the runner constructor turns the per-iteration loop
 into a semaphore-bounded `asyncio.gather` of `_run_one(job)` coroutines.

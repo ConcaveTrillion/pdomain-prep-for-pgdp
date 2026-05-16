@@ -1,13 +1,13 @@
 # 02 — Backend
 
-> **Pipeline task-model (locked 2026-05-07):** the canonical pipeline
-> shape is the per-page stage DAG specified in
-> [`docs/specs/pipeline-task-model.md`](specs/pipeline-task-model.md).
-> The text below describes the bootstrap, adapter contracts, route
-> structure, and concurrency primitives that are stable across the
-> refactor. The Step-4-monolith / `JobType.batch_*` orchestration
-> still exists in the codebase but is being progressively replaced by
-> the per-stage runner across M1–M6 (see `docs/08-roadmap.md` §P0.5).
+> **Pipeline task-model (locked 2026-05-07, M6 shipped 2026-05-15):**
+> the canonical pipeline is the per-page stage DAG specified in
+> [`../specs/pipeline-task-model.md`](../specs/pipeline-task-model.md).
+> Per AD-7, `STAGE_IMPL[stage_id][device]` (`core/pipeline/stage_registry.py`)
+> is the only execution path. `CpuBackend`, `LocalBackend`,
+> `process_page_cpu`, and the `JobType.batch_*` values have been
+> deleted. The text below describes the bootstrap, adapter contracts,
+> route structure, and concurrency primitives as-shipped post-M6.
 
 ## `Settings` and bootstrap
 
@@ -22,10 +22,15 @@ so tests can pass hermetic config.
 2. `build_database(settings)` — `SqliteDatabase` (Postgres is deferred).
 3. `build_auth(settings)` — `NoneAuth` / `ApiKeyAuth` / `JwtAuth`.
 4. Construct a process-wide `SingleExecutor` (the GPU priority queue).
-5. `build_gpu_backend(settings, storage=, database=, executor=)` — `CpuBackend`
-   / `LocalBackend` / `ModalBackend` / `SharedContainerBackend`.
+5. `build_gpu_backend(settings, storage=, database=, executor=)` — returns
+   `_NoOpGPUBackend()` for `gpu_backend in {"local","cpu","mps"}` (M6 deleted
+   `CpuBackend` / `LocalBackend`; per-page stages run through
+   `STAGE_IMPL[stage_id][device]` instead). Real backends remain for
+   `modal` (`ModalBackend`) and `shared_container` (`SharedContainerBackend`).
 6. `build_dispatcher(settings, gpu)` — `ImmediateDispatcher` (interval=0) or
-   `BatchDispatcher` (managed mode, 5-min default flush).
+   `BatchDispatcher` (managed mode, 5-min default flush). Local mode never
+   actually hits the dispatcher because no surviving job handler submits
+   `BatchJobItem`s in local/cpu/mps mode.
 7. `JobEventBroker()` — in-memory pub/sub for SSE.
 8. `InProcessJobRunner(database=, storage=, gpu=, dispatcher=, events=)`.
 9. Build the FastAPI app with a `lifespan` context manager that:
@@ -96,33 +101,32 @@ async def verify(credentials: str | None) -> UserContext
 
 ### `GPUBackend` (`adapters/gpu/base.py`)
 
-Today the protocol is:
+The Protocol is preserved for managed-mode (Modal / shared-container)
+dispatch paths only:
 
 ```python
 async def process_page(req: ProcessPageRequest) -> ProcessPageResponse
 async def run_ocr(req: OcrPageRequest) -> OcrPageResponse
-async def run_batch(items: list[BatchJobItem]) -> list[BatchJobResult]
+async def run_batch(items, *, progress_cb=None) -> list[BatchJobResult]
 ```
 
-This shape ships through M5 as compatibility-shimming for existing job
-rows. M2 lands `STAGE_IMPL[stage_id][device]` (canonical spec Q5)
-alongside this protocol; M5 routes every existing call through the
-registry; M6 deletes the class hierarchy in favor of a small
-`pick_device()` helper plus the registry.
+In local/cpu/mps mode, `_NoOpGPUBackend` (in `bootstrap.py`) satisfies the
+Protocol but raises `NotImplementedError` on every method. Per-page stages
+are invoked through `STAGE_IMPL[stage_id][device]` in
+`core/pipeline/stage_registry.py` (AD-7) — the registry is the only
+execution path post-M6. Runtime device selection is via `pick_device()`.
 
-- **`CpuBackend`** — fully wired. `process_page` reads source bytes via
-  `IStorage`, runs `core.pipeline.process_page_cpu` through the
-  `SingleExecutor`, writes the proofing image, returns the presigned URL.
-  `run_ocr` reads the OCR-cropped image, calls `core.ocr.ocr_page` on the
-  executor, writes text. `run_batch` dispatches each item sequentially.
-- **`LocalBackend`** — thin subclass of `CpuBackend`; DocTR / PyTorch
-  auto-pick `cuda:0` when available. M2 collapses this to a
-  `pick_device()` helper that the registry consults.
-- **`ModalBackend`** — wire shape verified by 3 TDD tests using a fake
+- **`_NoOpGPUBackend`** — local/cpu/mps stub. Keeps `app.state.gpu_backend`
+  non-None so the surviving GPU routes (`/suggest-splits`,
+  `/extract-illustration`) and `/healthz` can read `.name`.
+- **`ModalBackend`** — wire shape verified by TDD tests using a fake
   `modal` module. `Function.lookup("pgdp-prep", "...").remote.aio(payload)`
   carries Pydantic models as plain dicts. The Modal-side function bodies
-  in `modal_app.py` still raise `NotImplementedError` (S3 wiring TODO).
+  in `modal_app.py` still raise `NotImplementedError` (roadmap §D1).
 - **`SharedContainerBackend`** — placeholder.
+
+Adding a new pipeline stage means **registering an entry in `STAGE_IMPL`**.
+Do not add a sibling backend class. Do not add a `JobType.batch_*` value.
 
 ## API surface
 
@@ -156,41 +160,56 @@ Project + page CRUD, system defaults, presigned URLs, job index.
 | `GET /jobs` | Recent jobs by owner. Filter: `project_id`. |
 | `GET /jobs/{id}` | One Job. |
 
-### `/api/gpu/*` and per-page stage routes
+### `/api/gpu/*`
 
-The canonical per-page stage routes are documented in
-`docs/specs/pipeline-task-model.md` §API surface and `specs/07-api-design.md`.
-M1–M5 introduces them; legacy GPU routes remain as compatibility shims
-through M5.
-
-Today's routes:
+Post-M6, the GPU router holds only the workbench helpers and the project
+job-submission endpoints. The legacy `process-page` / `run-ocr-page` routes
+and their `batch_*` `JobType` values have been deleted.
 
 | Route | Notes |
 |---|---|
-| `POST /api/gpu/ingest` | Creates an `ingest` job (runs `project.ingest` + per-page `thumbnail` / `auto_detect_attrs` / `auto_detect_illustrations` stages). |
-| `POST /api/gpu/process-page` | **Deprecated, kept through M5.** Sync per-page proofing-chain run; becomes a thin shim onto `POST /api/pages/{id}/stages/canvas_map/run?mode=from`. |
-| `POST /api/gpu/run-ocr-page` | **Deprecated, kept through M5.** Becomes a shim onto `POST /api/pages/{id}/stages/ocr/run?mode=single`. |
-| `POST /api/gpu/suggest-illustrations` / `/extract-illustration` | Workbench helpers. |
-| `POST /api/gpu/jobs` | Submit a project-level job. New types: `project.run_stage_all_pages`, `project.run_dirty`, `build_package`. Deprecated types (kept through M5): `batch_process_pages`, `batch_ocr`, `batch_text_postprocess`, `batch_extract_illustrations`. |
-| `GET /api/gpu/jobs/{id}` | Job status. `JobStatus.awaiting_review` is a possible state for `build_package` jobs (canonical spec Q7). |
+| `POST /api/gpu/ingest` | Creates a `unzip` job (extract source) followed by `thumbnails` + per-page `auto_detect_attrs` / `auto_detect_illustrations` stages. |
+| `POST /api/gpu/suggest-splits` | Workbench helper. |
+| `POST /api/gpu/extract-illustration` / `/suggest-illustrations` | Workbench helpers. |
+| `GET /api/gpu/jobs` / `GET /api/gpu/jobs/{id}` | List + fetch jobs (delegated to data router). |
+| `POST /api/gpu/jobs` | Submit a project-level job. Live types: `unzip`, `thumbnails`, `build_package`, `run_page_stage`, `project_run_dirty`, `project_run_stage_all_pages`. |
 | `DELETE /api/gpu/jobs/{id}` | Cancel. |
 | `POST /api/gpu/jobs/{id}/retry` | Create a fresh `queued` copy of an `error`/`cancelled` job. |
 | `GET /api/gpu/jobs/{id}/events` | SSE — first frame is a snapshot, subsequent come from the broker (no polling). Includes `stage_id` / `page_id` for per-stage events. |
 
-New per-page-stage routes added in M2 (see canonical spec §API surface
-for the full shape):
+### Per-page stage routes (live under `/api/data/projects/{id}/pages/{idx0}`)
+
+These live on the data router (`api/data/pages.py`), not the GPU router:
 
 ```
-GET    /api/pages/{page_id}/stages
-POST   /api/pages/{page_id}/stages/{stage_id}/run
-GET    /api/pages/{page_id}/stages/{stage_id}/artifact
-POST   /api/pages/{page_id}/split
-POST   /api/pages/{page_id}/unsplit
-POST   /api/pages/{page_id}/text_review/clean
-GET    /api/projects/{id}/stages
-POST   /api/projects/{id}/stages/{stage_id}/run-all
-POST   /api/projects/{id}/run-dirty
-POST   /api/projects/{id}/build-package
+GET    /api/data/projects/{project_id}/pages/{idx0}
+PATCH  /api/data/projects/{project_id}/pages/{idx0}
+PATCH  /api/data/projects/{project_id}/pages/{idx0}/text
+GET    /api/data/projects/{project_id}/pages/{idx0}/text/{suffix}
+DELETE /api/data/projects/{project_id}/pages/{idx0}/words
+POST   /api/data/projects/{project_id}/pages/{idx0}/words/restore
+POST   /api/data/projects/{project_id}/pages/{idx0}/split
+DELETE /api/data/projects/{project_id}/pages/{idx0}/split
+GET    /api/data/projects/{project_id}/pages/{idx0}/stages
+POST   /api/data/projects/{project_id}/pages/{idx0}/stages/{stage_id}/run
+GET    /api/data/projects/{project_id}/pages/{idx0}/stages/{stage_id}/artifact
+GET    /api/data/projects/{project_id}/pages/{idx0}/stages/{stage_id}/thumbnail
+GET    /api/data/projects/{project_id}/pages/{idx0}/events
+PATCH  /api/data/projects/{project_id}/pages/reorder
+```
+
+Project-level orchestration (also on the data router):
+
+```
+POST   /api/data/projects/{project_id}/run-dirty       # project_run_dirty job
+POST   /api/data/projects/{project_id}/build-package   # build_package job (parks in awaiting_review if any proof-range page is un-attested)
+POST   /api/data/projects/{project_id}/archive         # soft-delete (hide from default listings)
+POST   /api/data/projects/{project_id}/unarchive
+GET    /api/data/projects/{project_id}/review-status   # unreviewed proof-page count + awaiting_review job id
+GET    /api/data/projects/{project_id}/source-preview                        # zip preview (P2 #8)
+GET    /api/data/projects/{project_id}/source-preview/{filename}/thumbnail
+GET    /api/data/projects/{project_id}/search          # SQLite FTS5 across OCR text
+GET    /api/data/pipeline/stages/{stage_id}/fields     # which ResolvedPageConfig fields a stage reads (M3 controls panel)
 ```
 
 ### `/cdn/*` (filesystem mode only)
@@ -221,16 +240,21 @@ traceback tail.
 
 - **HTTP** is async (FastAPI/uvicorn).
 - **DB** writes go through a single SQLite connection with a `threading.Lock`
-  around the cursor (set in iteration 10 to fix a commit race once the
-  job runner started fanning out).
+  around the cursor (added to fix a commit race once the job runner started
+  fanning out).
 - **GPU work** goes through a process-wide `SingleExecutor` (one worker
   thread, 200ms batch-collection window, INTERACTIVE preempts BATCH within
-  the window). All `process_page` / `run_ocr` calls funnel through it so
-  the workbench live preview never gets stuck behind a 400-page batch.
+  the window). `StageRunner` submits through it so the workbench live
+  preview never gets stuck behind a project-wide `project_run_dirty` fan-out.
+- **Stage writes** funnel through a bounded `StageWriteExecutor`
+  (`ThreadPoolExecutor` + `BoundedSemaphore`, AD-6) backed by env-var
+  overrides `PGDP_STAGE_WRITE_POOL_SIZE` and `PGDP_STAGE_WRITE_QUEUE_CAP`.
+  On write failure the stage is marked `failed` and descendants cascade
+  dirty (Q9 fail-loudly).
 - **Job runner** has a `max_concurrency` knob (default 1, semaphore-bounded
   fan-out for >1). Jobs claimed in one `run_pending` call run as
   `asyncio.gather(*sem-bounded coroutines)`.
 - **Dispatcher** in managed mode batches `BatchJobItem`s by `job_id` and
   flushes every `dispatch_interval_seconds` (default 300). On flush the
   registered completion callback marks each originating job complete or
-  error.
+  error. Not exercised in local mode (no surviving handler submits items).

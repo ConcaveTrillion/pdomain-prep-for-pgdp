@@ -12,8 +12,8 @@
 > orchestrators during M5, then are removed in M6.
 
 This spec is the **single source of truth** for the pipeline task-model.
-The rest of the spec set (`specs/00`–`specs/09`, `docs/02-backend.md`,
-`docs/03-pipeline.md`, `docs/06-deployment.md`, `docs/08-roadmap.md`)
+The rest of the spec set (`specs/00`–`specs/09`, `docs/architecture/02-backend.md`,
+`docs/architecture/03-pipeline.md`, `docs/architecture/06-deployment.md`, `docs/08-roadmap.md`)
 links here for the canonical model rather than restating it.
 
 ---

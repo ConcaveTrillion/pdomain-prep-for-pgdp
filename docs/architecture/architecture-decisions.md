@@ -13,7 +13,7 @@ diverge in code.
 
 ## AD-1. Pipeline task model — per-page stage DAG (locked 2026-05-07)
 
-Authoritative spec: [`docs/specs/pipeline-task-model.md`](specs/pipeline-task-model.md).
+Authoritative spec: [`docs/specs/pipeline-task-model.md`](../specs/pipeline-task-model.md).
 
 The pipeline is a 22-stage per-page DAG. Each stage is independently
 runnable, individually inspectable, and tracked in the `page_stages`
