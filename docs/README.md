@@ -35,8 +35,9 @@ not a draft.
 - [`design-brief/`](design-brief/) — design-system brief for the hi-fi
   redesign (active).
 - [`futures/`](futures/) — future-state design notes (not current milestones).
-- [`superpowers/plans/`](superpowers/plans/) — superpowers-skill plan
-  artifacts.
+- [`archive/`](archive/) — completed implementation plans and process docs
+  kept for historical context. Not authoritative for current state — read
+  `architecture/` for as-built reference.
 
 ## How to read these docs
 
