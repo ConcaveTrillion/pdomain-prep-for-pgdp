@@ -24,9 +24,21 @@ class FilesystemStorage(IStorage):
     def _path(self, key: str) -> Path:
         # Defence against path traversal — keys are joined under the root and
         # must resolve to a child of it.
+        #
+        # Reject absolute paths before stripping. On Unix, leading "/" makes
+        # Path.is_absolute() True. On Windows, "C:/foo" is also caught here.
+        # We check the original key so that a bare "/" prefix isn't silently
+        # swallowed by lstrip and allowed through.
+        if Path(key).is_absolute():
+            raise ValueError(f"storage key must be relative, got: {key!r}")
         clean = key.lstrip("/")
+        if Path(clean).is_absolute():
+            # Windows-style path after stripping (shouldn't occur on Unix, but
+            # belt-and-suspenders for portable operation).
+            raise ValueError(f"storage key must be relative, got: {key!r}")
         p = (self._root / clean).resolve()
-        if self._root.resolve() not in p.parents and p != self._root.resolve():
+        root_resolved = self._root.resolve()
+        if root_resolved not in p.parents and p != root_resolved:
             raise ValueError(f"key escapes data root: {key!r}")
         return p
 

@@ -136,6 +136,33 @@ def test_autodetect_picks_mps_on_apple_silicon(monkeypatch: pytest.MonkeyPatch) 
     assert _autodetect_gpu_backend() == "mps"
 
 
+def test_autodetect_gpu_logs_non_import_cupy_error(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A RuntimeError importing cupy must be logged at ERROR, not silently swallowed."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def raise_runtime(name: str, globals=None, locals=None, fromlist=(), level=0):
+        if name == "cupy":
+            raise RuntimeError("cupy loaded but CUDA driver is broken")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", raise_runtime)
+    monkeypatch.setattr(platform, "system", lambda: "Linux")
+    monkeypatch.setattr(platform, "machine", lambda: "x86_64")
+
+    import logging
+
+    with caplog.at_level(logging.ERROR, logger="pd_prep_for_pgdp.bootstrap"):
+        result = _autodetect_gpu_backend()
+
+    # Falls through to cpu after logging the unexpected error.
+    assert result == "cpu"
+    assert any("unexpected" in r.message.lower() or "cuda" in r.message.lower() for r in caplog.records)
+
+
 # ── successful-construction paths (complement the error-path tests above) ───
 
 

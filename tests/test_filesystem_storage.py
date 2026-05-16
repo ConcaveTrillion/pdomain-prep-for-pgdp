@@ -71,3 +71,33 @@ async def test_path_traversal_rejected(storage: FilesystemStorage) -> None:
         await storage.get_bytes("../etc/passwd")
     with pytest.raises(ValueError, match="escapes data root"):
         await storage.exists("../../../shadow")
+
+
+@pytest.mark.asyncio
+async def test_rejects_absolute_key(storage: FilesystemStorage) -> None:
+    """Absolute-path storage keys must be rejected before lstrip strips the slash."""
+    with pytest.raises(ValueError, match="storage key must be relative"):
+        await storage.put_bytes("/etc/passwd", b"x")
+    with pytest.raises(ValueError, match="storage key must be relative"):
+        await storage.get_bytes("/tmp/foo")
+
+
+@pytest.mark.asyncio
+async def test_rejects_windows_absolute_key(storage: FilesystemStorage) -> None:
+    """Windows absolute paths like C:/etc must be rejected.
+
+    On Windows, Path('C:/etc').is_absolute() is True; caught by the first
+    is_absolute() check. On Linux, Path('C:/etc/passwd').is_absolute() is
+    False, so the key is treated as a relative path inside the storage root
+    (which is safe). The test asserts it is rejected on Windows; on Linux
+    it is accepted but resolves safely inside root.
+    """
+    import platform as _platform
+
+    if _platform.system() == "Windows":
+        with pytest.raises(ValueError, match="storage key must be relative"):
+            storage._path("C:/etc/passwd")
+    else:
+        # On Linux the path is treated as a relative sub-directory — safe.
+        p = storage._path("C:/etc/passwd")
+        assert str(p).startswith(str(storage._root.resolve()))

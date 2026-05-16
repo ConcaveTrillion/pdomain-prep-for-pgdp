@@ -92,8 +92,10 @@ def _autodetect_gpu_backend() -> str:
         import cupy  # type: ignore[import-not-found]  # noqa: F401
 
         return "local"
-    except Exception:
+    except ImportError:
         pass
+    except Exception:
+        log.error("unexpected error checking for CUDA (cupy import failed unexpectedly)", exc_info=True)
     if platform.system() == "Darwin" and platform.machine() == "arm64":
         return "mps"
     return "cpu"
