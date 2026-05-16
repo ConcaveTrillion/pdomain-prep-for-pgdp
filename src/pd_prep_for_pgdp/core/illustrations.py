@@ -26,6 +26,26 @@ from .models import (
 log = logging.getLogger(__name__)
 
 
+_REGION_TYPE_MAP: dict[Any, str] = {}
+
+
+def _map_region_type(rt: Any) -> str:
+    """Map RegionType -> spec-05 type string. Raises KeyError on unrecognised type."""
+    global _REGION_TYPE_MAP
+    if not _REGION_TYPE_MAP:
+        try:
+            from pd_book_tools.layout.types import RegionType  # type: ignore[import-not-found]
+
+            _REGION_TYPE_MAP = {
+                RegionType.figure: "illustration",
+                RegionType.table: "illustration",
+                RegionType.decoration: "decoration",
+            }
+        except ImportError:
+            pass
+    return _REGION_TYPE_MAP[rt]
+
+
 def auto_detect_illustrations(
     image_path: Path,
     *,
@@ -42,18 +62,20 @@ def auto_detect_illustrations(
         return []
 
     try:
-        from pd_book_tools.layout.types import RegionType  # type: ignore[import-not-found]
-    except ImportError:
-        return []
+        from pd_book_tools.layout.types import LayoutRegion, RegionType  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise RuntimeError("pd_book_tools layout types are not available") from exc
 
     keep_types = {RegionType.figure, RegionType.decoration, RegionType.table}
     page_layout = layout_detector.detect(image_path)
     out: list[IllustrationRegion] = []
     idx = 0
-    for region in getattr(page_layout, "regions", []) or []:
+    for region in page_layout.regions:
+        if not isinstance(region, LayoutRegion):
+            raise TypeError(f"layout detector returned unexpected region type {type(region).__qualname__!r}")
         if region.type not in keep_types:
             continue
-        if getattr(region, "confidence", 0.0) < confidence_threshold:
+        if region.confidence < confidence_threshold:
             continue
         idx += 1
         out.append(
@@ -61,23 +83,13 @@ def auto_detect_illustrations(
                 index=idx,
                 label="",
                 type=_map_region_type(region.type),
-                L=int(getattr(region, "L", 0) or 0),
-                T=int(getattr(region, "T", 0) or 0),
-                R=int(getattr(region, "R", 0) or 0),
-                B=int(getattr(region, "B", 0) or 0),
+                L=region.L,
+                T=region.T,
+                R=region.R,
+                B=region.B,
             )
         )
     return out
-
-
-def _map_region_type(rt: Any) -> str:
-    """Map RegionType -> spec-05 type field."""
-    name = getattr(rt, "name", str(rt)).lower()
-    if "decor" in name:
-        return "decoration"
-    if "table" in name or "figure" in name:
-        return "illustration"
-    return "illustration"
 
 
 def extract_illustration(

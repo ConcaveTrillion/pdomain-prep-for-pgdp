@@ -6,7 +6,8 @@ resulting regions into spec-05 IllustrationRegions. Locks in:
   - regions of the wrong type are filtered out,
   - regions below the confidence threshold are filtered out,
   - kept regions get sequential 1-based `index` values,
-  - L/T/R/B are coerced to int even when the detector hands None,
+  - non-LayoutRegion objects in page_layout.regions raise TypeError,
+  - missing pd_book_tools raises RuntimeError (not silent []),
   - corrupt source bytes for `extract_illustration` raise a clear ValueError.
 """
 
@@ -23,42 +24,16 @@ from pd_prep_for_pgdp.core.illustrations import (
 )
 from pd_prep_for_pgdp.core.models import IllustrationRegion
 
-# ─── Fakes that mirror pd_book_tools.layout.types shape ───────────────────
-
-
-class _FakeRegionType:
-    """Stand-in for pd_book_tools.layout.types.RegionType.<member>."""
-
-    def __init__(self, name: str) -> None:
-        self.name = name
-
-    def __repr__(self) -> str:
-        return f"FakeRT({self.name})"
-
-
-_figure = _FakeRegionType("figure")
-_decoration = _FakeRegionType("decoration")
-_table = _FakeRegionType("table")
-_text = _FakeRegionType("text")  # should be filtered
-
-
-@dataclass
-class _FakeRegion:
-    type: object
-    confidence: float
-    L: int | None
-    T: int | None
-    R: int | None
-    B: int | None
+# ─── Fakes used by tests ──────────────────────────────────────────────────
 
 
 @dataclass
 class _FakePageLayout:
-    regions: list[_FakeRegion]
+    regions: list
 
 
 class _FakeDetector:
-    def __init__(self, regions: list[_FakeRegion]) -> None:
+    def __init__(self, regions: list) -> None:
         self._regions = regions
 
     def detect(self, image_path: Path) -> _FakePageLayout:
@@ -73,47 +48,30 @@ def test_none_detector_returns_empty(tmp_path: Path) -> None:
     assert out == []
 
 
-def test_filters_by_type_and_confidence(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    # auto_detect_illustrations imports pd_book_tools.layout.types at runtime
-    # to source RegionType. Patch a fake module in so the {keep_types} set
-    # built at the top of the function uses our fakes.
-    import sys
-    import types
+def test_filters_by_type_and_confidence(tmp_path: Path) -> None:
+    # Use real LayoutRegion / RegionType instances — the new implementation
+    # does isinstance(region, LayoutRegion) and requires typed access.
+    from pd_book_tools.layout.types import LayoutRegion, RegionType
 
-    fake_pkg = types.ModuleType("pd_book_tools")
-    fake_layout = types.ModuleType("pd_book_tools.layout")
-    fake_types = types.ModuleType("pd_book_tools.layout.types")
-
-    class RegionType:
-        figure = _figure
-        decoration = _decoration
-        table = _table
-        text = _text
-
-    fake_types.RegionType = RegionType
-    monkeypatch.setitem(sys.modules, "pd_book_tools", fake_pkg)
-    monkeypatch.setitem(sys.modules, "pd_book_tools.layout", fake_layout)
-    monkeypatch.setitem(sys.modules, "pd_book_tools.layout.types", fake_types)
-
-    detector = _FakeDetector(
-        [
-            _FakeRegion(type=_figure, confidence=0.9, L=10, T=20, R=110, B=220),
-            _FakeRegion(type=_text, confidence=0.99, L=0, T=0, R=10, B=10),  # wrong type
-            _FakeRegion(type=_decoration, confidence=0.2, L=0, T=0, R=10, B=10),  # below threshold
-            _FakeRegion(type=_table, confidence=0.51, L=None, T=None, R=None, B=None),  # None coords
-        ]
-    )
+    regions = [
+        LayoutRegion(type=RegionType.figure, L=10, T=20, R=110, B=220, confidence=0.9),
+        LayoutRegion(type=RegionType.text, L=0, T=0, R=10, B=10, confidence=0.99),  # wrong type
+        LayoutRegion(type=RegionType.decoration, L=0, T=0, R=10, B=10, confidence=0.2),  # below threshold
+        LayoutRegion(type=RegionType.table, L=0, T=0, R=5, B=5, confidence=0.51),
+    ]
+    detector = _FakeDetector(regions)  # type: ignore[arg-type]
     out = auto_detect_illustrations(tmp_path / "img.png", layout_detector=detector, confidence_threshold=0.5)
 
     assert [r.index for r in out] == [1, 2]
     assert out[0].L == 10 and out[0].R == 110
-    # None coords coerced to 0.
-    assert out[1].L == 0 and out[1].R == 0
+    assert out[1].L == 0 and out[1].R == 5
 
 
-def test_returns_empty_if_pd_book_tools_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """No pd_book_tools installed → auto-detect can't decide what counts as
-    illustration vs text. Must degrade to [] rather than crashing."""
+def test_raises_runtime_error_if_pd_book_tools_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No pd_book_tools installed → auto_detect_illustrations must raise RuntimeError
+    rather than silently returning []. The caller must know the detector can't work."""
     import builtins
 
     real_import = builtins.__import__
@@ -125,9 +83,50 @@ def test_returns_empty_if_pd_book_tools_missing(monkeypatch: pytest.MonkeyPatch,
 
     monkeypatch.setattr(builtins, "__import__", block)
 
-    detector = _FakeDetector([_FakeRegion(type=_figure, confidence=0.99, L=0, T=0, R=10, B=10)])
-    out = auto_detect_illustrations(tmp_path / "img.png", layout_detector=detector, confidence_threshold=0.5)
-    assert out == []
+    detector = _FakeDetector([])  # type: ignore[arg-type]
+    with pytest.raises(RuntimeError, match="pd_book_tools layout types are not available"):
+        auto_detect_illustrations(tmp_path / "img.png", layout_detector=detector, confidence_threshold=0.5)
+
+
+def test_map_region_type_unknown_value_raises() -> None:
+    """_map_region_type must not silently map unknown enum values to 'illustration'."""
+    from pd_book_tools.layout.types import RegionType
+
+    from pd_prep_for_pgdp.core.illustrations import _map_region_type
+
+    # Known mappings must still work.
+    assert _map_region_type(RegionType.figure) == "illustration"
+    assert _map_region_type(RegionType.table) == "illustration"
+    assert _map_region_type(RegionType.decoration) == "decoration"
+
+    # An unknown enum value must raise, not silently produce "illustration".
+    with pytest.raises(KeyError):
+        _map_region_type(RegionType.text)  # text regions are NOT illustrations
+
+
+def test_auto_detect_raises_on_non_layout_region() -> None:
+    """A non-LayoutRegion object in page_layout.regions must raise TypeError."""
+    from unittest.mock import MagicMock
+
+    from pd_book_tools.layout.types import RegionType
+
+    from pd_prep_for_pgdp.core.illustrations import auto_detect_illustrations
+
+    fake_layout = MagicMock()
+    bad_region = MagicMock(spec=[])  # has no LayoutRegion fields
+    bad_region.type = RegionType.figure
+    bad_region.confidence = 1.0
+    fake_layout.regions = [bad_region]
+
+    fake_detector = MagicMock()
+    fake_detector.detect.return_value = fake_layout
+
+    with pytest.raises(TypeError):
+        auto_detect_illustrations(
+            Path("/fake/image.png"),
+            layout_detector=fake_detector,
+            confidence_threshold=0.5,
+        )
 
 
 def test_extract_illustration_rejects_corrupt_bytes() -> None:

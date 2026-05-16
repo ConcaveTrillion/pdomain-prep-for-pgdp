@@ -11,6 +11,10 @@
 
 from __future__ import annotations
 
+# ── _map_region_type ───────────────────────────────────────────────────────
+import pytest
+from pd_book_tools.layout.types import RegionType
+
 from pd_prep_for_pgdp.core.illustrations import (
     _map_region_type,
     regions_for_page,
@@ -23,28 +27,23 @@ from pd_prep_for_pgdp.core.models import (
     SystemDefaults,
 )
 
-# ── _map_region_type ───────────────────────────────────────────────────────
-
-
-class _RT:
-    def __init__(self, name: str) -> None:
-        self.name = name
-
 
 def test_map_region_type_decoration() -> None:
-    assert _map_region_type(_RT("DECORATION")) == "decoration"
+    assert _map_region_type(RegionType.decoration) == "decoration"
 
 
 def test_map_region_type_figure() -> None:
-    assert _map_region_type(_RT("Figure")) == "illustration"
+    assert _map_region_type(RegionType.figure) == "illustration"
 
 
 def test_map_region_type_table() -> None:
-    assert _map_region_type(_RT("table")) == "illustration"
+    assert _map_region_type(RegionType.table) == "illustration"
 
 
-def test_map_region_type_unknown_falls_through_to_illustration() -> None:
-    assert _map_region_type(_RT("UnknownThing")) == "illustration"
+def test_map_region_type_unknown_raises_key_error() -> None:
+    """Non-illustration region types must raise KeyError, not silently map to 'illustration'."""
+    with pytest.raises(KeyError):
+        _map_region_type(RegionType.text)
 
 
 # ── synthesise_plate_region ────────────────────────────────────────────────
