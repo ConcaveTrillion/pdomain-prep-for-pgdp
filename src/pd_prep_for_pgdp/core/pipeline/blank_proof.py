@@ -18,10 +18,10 @@ def create_blank_proof(
     `h_w_ratio` is height/width, matching `cfg.page_h_w_ratio`. The shorter
     edge is `short_side` pixels.
     """
-    import numpy as np  # type: ignore[import-not-found]
+    import numpy as np  # pyright: ignore[reportMissingImports]
 
     try:
-        import cv2  # type: ignore[import-not-found]
+        import cv2  # pyright: ignore[reportMissingImports]
     except ImportError as e:
         raise RuntimeError("cv2 required for blank-proof generation") from e
 

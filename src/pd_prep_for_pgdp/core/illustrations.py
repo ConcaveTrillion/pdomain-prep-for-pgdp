@@ -34,7 +34,7 @@ def _map_region_type(rt: Any) -> str:
     global _REGION_TYPE_MAP
     if not _REGION_TYPE_MAP:
         try:
-            from pd_book_tools.layout.types import RegionType  # type: ignore[import-not-found]
+            from pd_book_tools.layout.types import RegionType  # pyright: ignore[reportMissingImports]
 
             _REGION_TYPE_MAP = {
                 RegionType.figure: "illustration",
@@ -62,7 +62,10 @@ def auto_detect_illustrations(
         return []
 
     try:
-        from pd_book_tools.layout.types import LayoutRegion, RegionType  # type: ignore[import-not-found]
+        from pd_book_tools.layout.types import (  # pyright: ignore[reportMissingImports]
+            LayoutRegion,
+            RegionType,
+        )
     except ImportError as exc:
         raise RuntimeError("pd_book_tools layout types are not available") from exc
 
@@ -82,7 +85,7 @@ def auto_detect_illustrations(
             IllustrationRegion(
                 index=idx,
                 label="",
-                type=_map_region_type(region.type),
+                type=_map_region_type(region.type),  # pyright: ignore[reportArgumentType]
                 L=region.L,
                 T=region.T,
                 R=region.R,
@@ -104,10 +107,10 @@ def extract_illustration(
     """
     import io
 
-    import numpy as np  # type: ignore[import-not-found]
+    import numpy as np  # pyright: ignore[reportMissingImports]
 
     try:
-        import cv2  # type: ignore[import-not-found]
+        import cv2  # pyright: ignore[reportMissingImports]
     except ImportError as e:
         raise RuntimeError("cv2 required for illustration extraction") from e
 

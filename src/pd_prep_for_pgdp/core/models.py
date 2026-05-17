@@ -115,7 +115,7 @@ class PageType(str, Enum):
 class AlignmentOverride(str, Enum):
     default = "default"
     top = "top"
-    center = "center"
+    center = "center"  # pyright: ignore[reportAssignmentType]  -- "center" shadows str.center; enum member wins at runtime
     bottom = "bottom"
 
 

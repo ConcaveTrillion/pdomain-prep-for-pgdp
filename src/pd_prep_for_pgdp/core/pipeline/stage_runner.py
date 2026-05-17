@@ -61,7 +61,7 @@ from pathlib import Path
 from time import time
 from typing import Any
 
-import cv2  # type: ignore[import-not-found]
+import cv2  # pyright: ignore[reportMissingImports]
 import numpy as np
 
 from ...adapters.database.base import IDatabase
@@ -693,7 +693,9 @@ async def run_stage(
         # Child decode_source: the dependency is the PARENT's ingest_source,
         # not the child's own (child pages don't have a source file of their own).
         _parent_ingest = await database.get_page_stage(
-            project_id, _child_decode_page.parent_page_id, "ingest_source"
+            project_id,
+            _child_decode_page.parent_page_id or "",  # parent_page_id is always set when parent_page is set
+            "ingest_source",
         )
         if _parent_ingest is None or _parent_ingest.status != PageStageStatus.clean:
             raise StageDependenciesNotMet(

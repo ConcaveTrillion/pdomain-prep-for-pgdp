@@ -112,7 +112,7 @@ def _grayscale_cpu(image: Any, cfg: Any = None) -> Any:
     so the CPU image-processing path stays consistent with the monolithic
     process_page chain.
     """
-    from pd_book_tools.image_processing.cv2_processing import (  # type: ignore[import-not-found]
+    from pd_book_tools.image_processing.cv2_processing import (  # pyright: ignore[reportMissingImports]
         cv2_convert_to_grayscale,
     )
 
@@ -126,13 +126,13 @@ def _threshold_cpu(image: Any, cfg: Any = None) -> Any:
     Otherwise falls back to Otsu auto-thresholding.
     """
     if cfg is not None and cfg.threshold_level is not None:
-        from pd_book_tools.image_processing.cv2_processing import (  # type: ignore[import-not-found]
+        from pd_book_tools.image_processing.cv2_processing import (  # pyright: ignore[reportMissingImports]
             binary_thresh,
         )
 
         return binary_thresh(image, level=cfg.threshold_level)
 
-    from pd_book_tools.image_processing.cv2_processing import (  # type: ignore[import-not-found]
+    from pd_book_tools.image_processing.cv2_processing import (  # pyright: ignore[reportMissingImports]
         otsu_binary_thresh,
     )
 
@@ -145,7 +145,7 @@ def _invert_cpu(image: Any, cfg: Any = None) -> Any:
     Wraps ``pd_book_tools.image_processing.cv2_processing.invert_image``.
     Idempotent under double-application (Q3-friendly: `invert(invert(x)) == x`).
     """
-    from pd_book_tools.image_processing.cv2_processing import (  # type: ignore[import-not-found]
+    from pd_book_tools.image_processing.cv2_processing import (  # pyright: ignore[reportMissingImports]
         invert_image,
     )
 
@@ -199,7 +199,7 @@ def _initial_crop_cpu(image: Any, cfg: Any = None) -> Any:
     if not any(crop):
         return image
 
-    from pd_book_tools.image_processing.cv2_processing import (  # type: ignore[import-not-found]
+    from pd_book_tools.image_processing.cv2_processing import (  # pyright: ignore[reportMissingImports]
         crop_edges,
     )
 
@@ -216,7 +216,7 @@ def _manual_deskew_pre_cpu(image: Any, cfg: Any = None) -> Any:
     if cfg is None or cfg.deskew_before_crop is None:
         return image
 
-    from pd_book_tools.image_processing.cv2_processing import (  # type: ignore[import-not-found]
+    from pd_book_tools.image_processing.cv2_processing import (  # pyright: ignore[reportMissingImports]
         rotate_image,
     )
 
@@ -245,7 +245,7 @@ def _find_content_edges_cpu(image: Any, cfg: Any = None) -> tuple[int, int, int,
 
     The runner encodes this as a JSON list and writes it to `output.json`.
     """
-    from pd_book_tools.image_processing.cv2_processing import (  # type: ignore[import-not-found]
+    from pd_book_tools.image_processing.cv2_processing import (  # pyright: ignore[reportMissingImports]
         find_edges,
     )
 
@@ -263,7 +263,7 @@ def _crop_to_content_cpu(image: Any, bbox: tuple[int, int, int, int], cfg: Any =
     it is skipped. ResolvedPageConfig plumbing into the runner lands later;
     this iteration always takes the no-pad branch.
     """
-    from pd_book_tools.image_processing.cv2_processing import (  # type: ignore[import-not-found]
+    from pd_book_tools.image_processing.cv2_processing import (  # pyright: ignore[reportMissingImports]
         crop_to_rectangle,
     )
 
@@ -278,7 +278,7 @@ def _auto_deskew_cpu(image: Any, cfg: Any = None) -> Any:
     ResolvedPageConfig skip conditions land when config plumbing is wired;
     for now, always attempt auto-deskew via `auto_deskew(pct=0.30)`.
     """
-    from pd_book_tools.image_processing.cv2_processing import (  # type: ignore[import-not-found]
+    from pd_book_tools.image_processing.cv2_processing import (  # pyright: ignore[reportMissingImports]
         auto_deskew,
     )
 
@@ -295,7 +295,7 @@ def _morph_fill_cpu(image: Any, cfg: Any = None) -> Any:
     idempotent on already-clean binary images. ResolvedPageConfig plumbing
     will expose the do_morph toggle; until then the impl always runs.
     """
-    from pd_book_tools.image_processing.cv2_processing import (  # type: ignore[import-not-found]
+    from pd_book_tools.image_processing.cv2_processing import (  # pyright: ignore[reportMissingImports]
         morph_fill,
     )
 
@@ -310,7 +310,7 @@ def _rescale_cpu(image: Any, cfg: Any = None) -> Any:
     text=255/bg=0; `rescale_image` expects text=0/bg=255 (white-on-black).
     The inversion restores that convention before scaling.
     """
-    from pd_book_tools.image_processing.cv2_processing import (  # type: ignore[import-not-found]
+    from pd_book_tools.image_processing.cv2_processing import (  # pyright: ignore[reportMissingImports]
         invert_image,
         rescale_image,
     )
@@ -330,7 +330,7 @@ def _canvas_map_cpu(image: Any, cfg: Any = None) -> Any:
 
     Returns an ndarray; the runner encodes it to PNG (output_type='image_bytes').
     """
-    from pd_book_tools.image_processing.cv2_processing import (  # type: ignore[import-not-found]
+    from pd_book_tools.image_processing.cv2_processing import (  # pyright: ignore[reportMissingImports]
         Alignment,
         map_content_onto_scaled_canvas,
     )
@@ -376,7 +376,7 @@ def _auto_detect_attrs_cpu(image: Any, cfg: Any = None) -> dict[str, Any]:
 
     The runner JSON-serialises this dict and writes it to `output.json`.
     """
-    import cv2  # type: ignore[import-not-found]
+    import cv2  # pyright: ignore[reportMissingImports]
 
     from ...core.auto_detect import detect_page_attributes
 
@@ -410,7 +410,7 @@ def _blank_proof_synth_cpu(page_attrs: dict[str, Any], cfg: Any = None) -> Any:
     Uses `h_w_ratio` from the detected page attributes. Falls back to 1.65
     (US-Letter proportions) when the field is absent or zero.
     """
-    import numpy as np  # type: ignore[import-not-found]
+    import numpy as np  # pyright: ignore[reportMissingImports]
 
     h_w_ratio = float(page_attrs.get("h_w_ratio") or 1.65)
     short_side = 1000
@@ -474,7 +474,7 @@ def _thumbnail_cpu(image: Any, cfg: Any = None) -> bytes:
     Returns bytes; the runner's `jpeg_bytes` output-type path writes them
     verbatim as `output.jpg`.
     """
-    import cv2  # type: ignore[import-not-found]
+    import cv2  # pyright: ignore[reportMissingImports]
 
     _THUMBNAIL_MAX_DIM = 300
     _THUMBNAIL_QUALITY = 85
@@ -506,14 +506,16 @@ def _auto_detect_illustrations_cpu(image: Any, cfg: Any = None) -> list[Any]:
     Returns a list of dicts; the runner JSON-serialises this list and writes
     it to `output.json` (output_type='illustration_regions').
     """
-    import cv2  # type: ignore[import-not-found]
+    import cv2  # pyright: ignore[reportMissingImports]
 
     # Try loading the layout detector from pd_book_tools. This is a heavy
     # optional dependency (model weights); if absent, fall back to no-op.
     # Only ImportError is caught — runtime errors (CUDA init, OOM, …) propagate
     # so the stage is marked `failed` rather than silently producing no regions.
     try:
-        from pd_book_tools.layout import get_layout_detector  # type: ignore[import-not-found]
+        from pd_book_tools.layout import (
+            get_layout_detector,  # pyright: ignore[reportMissingImports, reportAttributeAccessIssue]
+        )
 
         detector = get_layout_detector()
     except ImportError:
@@ -651,7 +653,7 @@ def _ocr_cpu(image: Any, cfg: Any = None) -> dict[str, bytes]:
     import os
     import tempfile
 
-    import cv2  # type: ignore[import-not-found]
+    import cv2  # pyright: ignore[reportMissingImports]
 
     from ...core.models import SystemDefaults
     from ...core.ocr import ocr_page

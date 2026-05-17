@@ -68,7 +68,7 @@ _cache_lock = threading.Lock()
 def _detect_torch_device() -> str:
     """Pick the best available torch device (CUDA -> MPS -> CPU)."""
     try:
-        import torch  # type: ignore[import-not-found]
+        import torch  # pyright: ignore[reportMissingImports]
     except ImportError:
         return "cpu"
 
@@ -80,7 +80,7 @@ def _detect_torch_device() -> str:
         return "cpu"
 
     try:
-        from torch.backends import mps  # type: ignore[import-not-found]
+        from torch.backends import mps  # pyright: ignore[reportMissingImports]
 
         if mps.is_available():
             return "mps"
@@ -125,7 +125,7 @@ def get_predictor(
             detection_path=detection_path,
             recognition_path=recognition_path,
         )
-        from pd_book_tools.ocr.doctr_support import (  # type: ignore[import-not-found]
+        from pd_book_tools.ocr.doctr_support import (  # pyright: ignore[reportMissingImports]
             get_finetuned_torch_doctr_predictor,
         )
 
@@ -168,7 +168,7 @@ def get_layout_detector(
             prefetch_layout_files(repo, revision)
 
         silence_transformers_load_chatter()
-        from pd_book_tools.layout import get_detector  # type: ignore[import-not-found]
+        from pd_book_tools.layout import get_detector  # pyright: ignore[reportMissingImports]
 
         log.info("Loading layout detector: %s (device=%s)", descriptor or layout_model, dev)
         detector = get_detector(
@@ -237,7 +237,7 @@ def ocr_page(
             confidence=system.layout_detector_confidence,
         )
 
-    from pd_book_tools.ocr.document import Document  # type: ignore[import-not-found]
+    from pd_book_tools.ocr.document import Document  # pyright: ignore[reportMissingImports]
 
     doc = Document.from_image_ocr_via_doctr(
         image_path,
@@ -268,7 +268,7 @@ def ocr_page(
     dropped = 0
     if validate_reorg and do_reorg:
         try:
-            from pd_book_tools.ocr.reorganize_page_utils import (  # type: ignore[import-not-found]
+            from pd_book_tools.ocr.reorganize_page_utils import (  # pyright: ignore[reportMissingImports]
                 validate_word_preservation,
             )
 
@@ -307,8 +307,8 @@ def _ocr_page_tesseract(
 ) -> OcrPageResult:
     """OCR via Tesseract — bypasses DocTR / layout / reorganize_page."""
     try:
-        import pytesseract  # type: ignore[import-not-found]
-        from PIL import Image  # type: ignore[import-not-found]
+        import pytesseract  # pyright: ignore[reportMissingImports]
+        from PIL import Image  # pyright: ignore[reportMissingImports]
     except ImportError as e:
         raise RuntimeError("Tesseract path requires pytesseract + Pillow") from e
 

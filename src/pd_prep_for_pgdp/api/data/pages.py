@@ -908,7 +908,7 @@ async def run_page_stage(
             },
         )
         await db.put_job(job)
-        return JSONResponse(content=job.model_dump(mode="json"), status_code=202)
+        return JSONResponse(content=job.model_dump(mode="json"), status_code=202)  # pyright: ignore[reportReturnType]
 
     # Resolve per-page config here in the route handler so that config-aware
     # stages receive the current DB values. We already fetched `project` and

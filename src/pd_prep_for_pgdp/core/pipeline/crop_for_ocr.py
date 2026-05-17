@@ -37,10 +37,10 @@ def _crop_iter(
     page: PageRecord,
     cfg: ResolvedPageConfig,
 ) -> Iterator[OcrCropOutput]:
-    import numpy as np  # type: ignore[import-not-found]
+    import numpy as np  # pyright: ignore[reportMissingImports]
 
     try:
-        import cv2  # type: ignore[import-not-found]
+        import cv2  # pyright: ignore[reportMissingImports]
     except ImportError as e:
         raise RuntimeError("cv2 required for crop_for_ocr") from e
 

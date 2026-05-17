@@ -372,7 +372,7 @@ async def _enumerate_zip(storage: IStorage, source_key: str, project_id: str) ->
 
 async def _enumerate_folder(storage: IStorage, prefix: str) -> list[_SourceEntry]:
     entries: list[_SourceEntry] = []
-    async for obj in storage.list_prefix(prefix):
+    async for obj in storage.list_prefix(prefix):  # pyright: ignore[reportGeneralTypeIssues]
         ext = _ext_lower(obj.key)
         if ext not in _IMAGE_EXTS:
             continue
@@ -499,10 +499,10 @@ def thumbnail_for_page(idx0: int, stem: str, src: bytes) -> tuple[int, str, byte
 
 def _make_thumbnail_bytes(src: bytes) -> bytes:
     """Decode `src`, resize to fit `THUMBNAIL_MAX_DIM`, encode back to JPG."""
-    import numpy as np  # type: ignore[import-not-found]
+    import numpy as np  # pyright: ignore[reportMissingImports]
 
     try:
-        import cv2  # type: ignore[import-not-found]
+        import cv2  # pyright: ignore[reportMissingImports]
     except ImportError as e:
         raise RuntimeError("cv2 required for thumbnail generation") from e
 

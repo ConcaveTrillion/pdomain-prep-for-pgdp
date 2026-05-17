@@ -67,7 +67,7 @@ def build_database(settings: Settings) -> IDatabase:
             from .adapters.database.postgres import PostgresDatabase
         except ImportError as e:
             raise RuntimeError("Postgres requires the [postgres] extra") from e
-        return PostgresDatabase(url)
+        return PostgresDatabase(url)  # pyright: ignore[reportReturnType]  -- PostgresDatabase partial impl; page_stage methods pending
     raise RuntimeError(f"unrecognised PGDP_DATABASE_URL: {url!r}")
 
 
@@ -89,7 +89,7 @@ def _autodetect_gpu_backend() -> str:
     """CUDA -> local; mac arm64 -> mps; else cpu."""
     try:
         # CUDA check via cupy (which is the [cuda] extra). If unavailable, fall through.
-        import cupy  # type: ignore[import-not-found]  # noqa: F401
+        import cupy  # pyright: ignore[reportMissingImports]  # noqa: F401
 
         return "local"
     except ImportError:

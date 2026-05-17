@@ -16,7 +16,7 @@ from .base import IStorage, ObjectInfo
 class S3Storage(IStorage):
     def __init__(self, bucket: str, cdn_url_base: str | None = None, prefix: str = "") -> None:
         try:
-            import boto3
+            import boto3  # pyright: ignore[reportMissingImports]
         except ImportError as e:
             raise RuntimeError(
                 "S3 storage requires the [s3] extra: install with 'pip install pd-prep-for-pgdp[s3]'"
@@ -61,7 +61,7 @@ class S3Storage(IStorage):
             lambda: self._client.delete_object(Bucket=self._bucket, Key=self._full_key(key))
         )
 
-    async def list_prefix(self, prefix: str) -> AsyncIterator[ObjectInfo]:
+    async def list_prefix(self, prefix: str) -> AsyncIterator[ObjectInfo]:  # pyright: ignore[reportIncompatibleMethodOverride]
         full_prefix = self._full_key(prefix)
         token: str | None = None
         while True:

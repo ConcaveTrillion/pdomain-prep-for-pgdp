@@ -58,7 +58,7 @@ class FilesystemStorage(IStorage):
         if p.exists():
             p.unlink()
 
-    async def list_prefix(self, prefix: str) -> AsyncIterator[ObjectInfo]:
+    async def list_prefix(self, prefix: str) -> AsyncIterator[ObjectInfo]:  # pyright: ignore[reportIncompatibleMethodOverride]
         base = self._path(prefix)
         if not base.exists():
             return

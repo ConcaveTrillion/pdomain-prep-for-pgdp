@@ -16,7 +16,7 @@ from __future__ import annotations
 # a non-Modal environment (e.g. for type-checking) doesn't fail.
 
 try:
-    import modal  # type: ignore[import-not-found]
+    import modal  # pyright: ignore[reportMissingImports]
 
     _MODAL_AVAILABLE = True
 except ImportError:
@@ -26,7 +26,7 @@ except ImportError:
 
 if _MODAL_AVAILABLE:
     image = (
-        modal.Image.debian_slim(python_version="3.13")
+        modal.Image.debian_slim(python_version="3.13")  # pyright: ignore[reportOptionalMemberAccess]
         .apt_install("libgl1", "libglib2.0-0")
         .pip_install(
             "fastapi>=0.115",
@@ -43,7 +43,7 @@ if _MODAL_AVAILABLE:
         .add_local_python_source("pd_prep_for_pgdp")
     )
 
-    app = modal.App("pgdp-prep", image=image)
+    app = modal.App("pgdp-prep", image=image)  # pyright: ignore[reportOptionalMemberAccess]
 
     GPU_PROFILE = "T4"  # spec 09 default; flip to "A10G" for speed
     DEFAULT_TIMEOUT_S = 60 * 10  # 10 min per call; batch can go higher

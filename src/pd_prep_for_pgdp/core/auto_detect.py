@@ -38,10 +38,10 @@ class PageAttributeSuggestion:
 
 def detect_page_attributes(image_bytes: bytes) -> PageAttributeSuggestion:
     """Heuristic suggestions for a single page."""
-    import numpy as np  # type: ignore[import-not-found]
+    import numpy as np  # pyright: ignore[reportMissingImports]
 
     try:
-        import cv2  # type: ignore[import-not-found]
+        import cv2  # pyright: ignore[reportMissingImports]
     except ImportError as e:
         raise RuntimeError("cv2 required for auto_detect") from e
 
@@ -107,10 +107,10 @@ def median_aspect_ratio(image_bytes_list: list[bytes]) -> float:
     Used during ingest to seed the project's default `page_h_w_ratio`. Decoded
     one at a time to keep memory bounded; corrupt entries are skipped.
     """
-    import numpy as np  # type: ignore[import-not-found]
+    import numpy as np  # pyright: ignore[reportMissingImports]
 
     try:
-        import cv2  # type: ignore[import-not-found]
+        import cv2  # pyright: ignore[reportMissingImports]
     except ImportError as e:
         raise RuntimeError("cv2 required for median_aspect_ratio") from e
 

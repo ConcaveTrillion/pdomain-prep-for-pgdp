@@ -41,8 +41,8 @@ class JwtAuth:
         if not credentials:
             raise HTTPException(status_code=401, detail="missing bearer token")
         try:
-            import jwt as pyjwt
-            from jwt import PyJWKClient
+            import jwt as pyjwt  # pyright: ignore[reportMissingImports]
+            from jwt import PyJWKClient  # pyright: ignore[reportMissingImports]
         except ImportError as e:
             raise RuntimeError(
                 "JWT auth requires the [jwt] extra: install with 'pip install pd-prep-for-pgdp[jwt]'"

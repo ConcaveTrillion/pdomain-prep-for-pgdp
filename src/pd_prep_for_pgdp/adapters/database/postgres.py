@@ -18,7 +18,7 @@ from __future__ import annotations
 # Eager imports — the [postgres] extra is required to construct this class.
 # Bootstrap wraps the resulting ImportError into a friendly RuntimeError
 # pointing the user at the extra; no module-level fallback shim here.
-from psycopg import AsyncConnection
+from psycopg import AsyncConnection  # pyright: ignore[reportMissingImports]
 
 from ...core.models import Job, PageRecord, Project, SystemDefaults
 from .base import SearchResult
@@ -77,7 +77,7 @@ class PostgresDatabase:
 
     async def initialize(self) -> None:
         self._conn = await AsyncConnection.connect(self._url, autocommit=True)
-        async with self._conn.cursor() as cur:
+        async with self._conn.cursor() as cur:  # pyright: ignore[reportOptionalMemberAccess]
             await cur.execute(_SCHEMA)
 
     async def close(self) -> None:

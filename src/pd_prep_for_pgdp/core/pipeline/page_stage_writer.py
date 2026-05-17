@@ -137,7 +137,7 @@ def make_stage_thumbnail_bytes(artifact_bytes: bytes, output_type: str) -> bytes
     if output_type not in _THUMBNAIL_OUTPUT_TYPES:
         return None
     try:
-        import cv2  # type: ignore[import-not-found]
+        import cv2  # pyright: ignore[reportMissingImports]
         import numpy as np
     except ImportError:
         return None

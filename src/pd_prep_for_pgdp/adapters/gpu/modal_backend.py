@@ -59,7 +59,7 @@ class ModalBackend(GPUBackend):
         if cached is not None:
             return cached
         try:
-            from modal import Function  # type: ignore[import-not-found]
+            from modal import Function  # pyright: ignore[reportMissingImports]
         except ImportError as e:
             raise RuntimeError(
                 "Modal backend requires the [modal] extra: install with 'pip install pd-prep-for-pgdp[modal]'"
