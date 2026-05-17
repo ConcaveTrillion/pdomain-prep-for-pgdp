@@ -85,6 +85,8 @@ async def unzip_source(
 
     total = len(entries)
     pages: list[PageRecord] = []
+    _unzip_cb_failures = 0
+    _progress_cb_max_failures = 3
     for valid_idx0, entry in enumerate(entries):
         pages.append(
             PageRecord(
@@ -102,7 +104,19 @@ async def unzip_source(
             try:
                 await progress_cb(valid_idx0 + 1, total, entry.stem)
             except Exception:
-                log.exception("unzip progress_cb raised; continuing")
+                _unzip_cb_failures += 1
+                if _unzip_cb_failures >= _progress_cb_max_failures:
+                    log.error(
+                        "progress_cb failed %d times consecutively; disabling for this job",
+                        _unzip_cb_failures,
+                    )
+                    progress_cb = None
+                else:
+                    log.exception(
+                        "unzip progress_cb raised (failure %d/%d)",
+                        _unzip_cb_failures,
+                        _progress_cb_max_failures,
+                    )
 
     if pages:
         await database.put_pages(pages)
@@ -202,6 +216,33 @@ async def generate_thumbnails(
     jpgs_by_idx: dict[int, bytes] = {}
     errors: list[str] = list(source_read_errors)
 
+    # Circuit breaker: stop calling progress_cb after 3 consecutive failures
+    # to avoid spamming logs when the UI-side reporting is broken.
+    _thumb_cb_failures = 0
+    _progress_cb_max_failures = 3
+
+    async def _call_progress_cb(done: int, total: int, stem: str) -> None:
+        nonlocal progress_cb, _thumb_cb_failures
+        if progress_cb is None:
+            return
+        try:
+            await progress_cb(done, total, stem)
+            _thumb_cb_failures = 0
+        except Exception:
+            _thumb_cb_failures += 1
+            if _thumb_cb_failures >= _progress_cb_max_failures:
+                log.error(
+                    "progress_cb failed %d times consecutively; disabling for this job",
+                    _thumb_cb_failures,
+                )
+                progress_cb = None
+            else:
+                log.exception(
+                    "thumbnails progress_cb raised (failure %d/%d)",
+                    _thumb_cb_failures,
+                    _progress_cb_max_failures,
+                )
+
     if workers <= 1:
         # ── Single-thread path ────────────────────────────────────────────
         # Used by the test suite (no env override) and by users who explicitly
@@ -234,11 +275,7 @@ async def generate_thumbnails(
             await storage.put_bytes(thumb_key, jpg, "image/jpeg")
             page = pages_by_idx[idx0]
             updated.append(page.model_copy(update={"thumbnail_key": thumb_key}))
-            if progress_cb is not None:
-                try:
-                    await progress_cb(done, total, stem)
-                except Exception:
-                    log.exception("thumbnails progress_cb raised; continuing")
+            await _call_progress_cb(done, total, stem)
     else:
         # ── ProcessPoolExecutor path ──────────────────────────────────────
         # CPU-bound JPEG encode is trivially data-parallel; one worker per
@@ -261,19 +298,11 @@ async def generate_thumbnails(
                 done += 1
                 if err is not None:
                     errors.append(f"{r_stem}: {err}")
-                    if progress_cb is not None:
-                        try:
-                            await progress_cb(done, total, r_stem)
-                        except Exception:
-                            log.exception("thumbnails progress_cb raised; continuing")
+                    await _call_progress_cb(done, total, r_stem)
                     continue
                 assert jpg is not None
                 jpgs_by_idx[r_idx0] = jpg
-                if progress_cb is not None:
-                    try:
-                        await progress_cb(done, total, r_stem)
-                    except Exception:
-                        log.exception("thumbnails progress_cb raised; continuing")
+                await _call_progress_cb(done, total, r_stem)
 
         # Persist in idx0 order so output is deterministic regardless of
         # which worker finished first.

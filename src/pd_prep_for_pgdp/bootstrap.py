@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import platform
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from importlib import resources
 from typing import Any
 
@@ -213,8 +213,10 @@ def build_app(settings: Settings | None = None) -> FastAPI:
             # poll iterations. Cancelling mid-poll leaves a worker thread
             # mid-SQLite-call, which segfaults at the C boundary when we
             # close the connection below.
-            with suppress(Exception):  # pragma: no cover - defensive
+            try:  # pragma: no cover - defensive
                 job_runner.stop()
+            except Exception:  # pragma: no cover
+                log.exception("error stopping job_runner during lifespan shutdown")
 
             tasks = []
             for attr in ("dispatcher_task", "job_runner_task", "executor_task"):
@@ -223,8 +225,12 @@ def build_app(settings: Settings | None = None) -> FastAPI:
                     task.cancel()
                     tasks.append(task)
             for task in tasks:
-                with suppress(asyncio.CancelledError, Exception):
+                try:
                     await task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    log.exception("error awaiting task during lifespan shutdown")
             await database.close()
 
     app = FastAPI(

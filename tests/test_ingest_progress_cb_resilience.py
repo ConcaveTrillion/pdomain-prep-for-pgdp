@@ -175,3 +175,42 @@ async def test_thumbnails_skips_missing_source_on_storage(db, storage) -> None:
 
     result = await generate_thumbnails(project=project, storage=storage, database=db)
     assert result.page_count == 0
+
+
+@pytest.mark.asyncio
+async def test_progress_cb_disabled_after_max_failures(db, storage) -> None:
+    """After 3 consecutive failures, progress_cb must be disabled (not called further).
+
+    Generates 5 pages so the cb would be invoked 5 times if the circuit breaker
+    didn't kick in. With the breaker, it should stop after exactly 3 failures
+    and the remaining pages proceed without calling it.
+    """
+    pytest.importorskip("cv2")
+    project = _project()
+    await db.put_project(project)
+    src_key = "projects/ip1/source.zip"
+    pages_data = [(f"p{i}.png", _png(50, 50)) for i in range(5)]
+    await storage.put_bytes(src_key, _zip(pages_data))
+    await unzip_source(project=project, source_type="zip", source_key=src_key, storage=storage, database=db)
+    refreshed = await db.get_project(project.id)
+    assert refreshed is not None
+
+    call_count = 0
+
+    async def always_boom(_c, _t, _s):
+        nonlocal call_count
+        call_count += 1
+        raise RuntimeError("cb always fails")
+
+    result = await generate_thumbnails(
+        project=refreshed,
+        storage=storage,
+        database=db,
+        progress_cb=always_boom,
+        thumbnail_workers=1,
+    )
+    # All 5 thumbnails must still be generated despite cb failures.
+    assert result.page_count == 5
+    # Circuit breaker fires after 3 consecutive failures — cb must NOT be
+    # called for pages 4 and 5.
+    assert call_count == 3
