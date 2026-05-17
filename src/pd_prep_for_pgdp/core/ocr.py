@@ -194,7 +194,7 @@ class OcrPageResult:
     layout_regions: int = 0
     pre_reorg_word_count: int = 0
     post_reorg_word_count: int = 0
-    dropped_word_count: int = 0
+    dropped_word_count: int | None = None
     words_error: str | None = None  # set when bbox extraction fails (Tesseract path)
 
 
@@ -282,8 +282,8 @@ def ocr_page(
                     image_path.name,
                 )
         except Exception:
-            log.exception("validate_word_preservation failed; dropped_word_count set to -1 (unknown)")
-            dropped = -1  # sentinel: unknown, not "zero drops"
+            log.exception("validate_word_preservation failed; dropped_word_count set to None (unknown)")
+            dropped = None  # sentinel: unknown, not "zero drops"
 
     return OcrPageResult(
         text=page.text or "",

@@ -42,10 +42,13 @@ exists.
 from __future__ import annotations
 
 import contextlib
+import logging
 from collections.abc import Callable
 from typing import Any
 
 from ..models import PAGE_STAGE_IDS
+
+log = logging.getLogger(__name__)
 
 # ─── Sentinel exception ─────────────────────────────────────────────────────
 
@@ -672,6 +675,11 @@ def _ocr_cpu(image: Any, cfg: Any = None) -> dict[str, bytes]:
         from pathlib import Path
 
         result = ocr_page(Path(tmp_path_str), cfg=cfg, system=system)
+        if result.words_error:
+            log.warning(
+                "OCR words extraction failed (words.json will be empty): %s",
+                result.words_error,
+            )
     finally:
         try:
             import os as _os
