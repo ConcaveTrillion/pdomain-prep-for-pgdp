@@ -28,6 +28,10 @@
     // Historical context — superseded by specs/00-09. Per CLAUDE.md
     // these are canonical and the proposal is reference-only.
     "specs/REFACTOR-PROPOSAL.md",
+    // Plans inherit prose styles from upstream superpowers templates;
+    // line-length and table-style differ across plans and shouldn't
+    // gate commits.
+    "docs/plans/**",
     // Archived plans and process docs — historical snapshots, not
     // authoritative. Frozen at the form they shipped in.
     "docs/archive/**",
