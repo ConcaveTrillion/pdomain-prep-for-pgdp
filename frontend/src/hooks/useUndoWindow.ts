@@ -35,14 +35,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 const UNDO_WINDOW_MS = 5_000;
 const TICK_MS = 100; // countdown granularity
 
-export interface OcrWordLike {
+interface OcrWordLike {
   id: string;
   text: string;
   confidence: number;
   bounding_box: { left: number; top: number; width: number; height: number };
 }
 
-export interface UndoWindowState {
+interface UndoWindowState {
   /** IDs of the words that were deleted and could be restored. */
   wordIds: string[];
   /** Full word objects saved for restoration. */

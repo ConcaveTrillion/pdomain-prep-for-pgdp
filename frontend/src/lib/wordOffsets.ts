@@ -12,7 +12,7 @@
  * Once the OpenAPI export covers the OCR endpoint these can be
  * replaced with the generated types.
  */
-export interface BoundingBox {
+interface BoundingBox {
   left: number;
   top: number;
   width: number;

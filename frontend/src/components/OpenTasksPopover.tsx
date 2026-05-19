@@ -13,7 +13,7 @@ import { Bell, CheckCircle } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/Popover";
 
-export interface Task {
+interface Task {
   /** Unique identifier (page id, review queue id, etc.) */
   id: string;
   /** Human-readable label shown in the popover row (e.g. "Page 0001") */

@@ -221,10 +221,10 @@ frontend-lint: ## Run ESLint on the SPA
 	@$(call _npm,install)
 	@$(call _npm,run lint)
 
-frontend-knip: ## Run knip dead-export detector (non-blocking; advisory only)
+frontend-knip: ## Run knip dead-export detector (blocking)
 	@echo "🔍 Running knip dead-export scan..."
 	@$(call _npm,install)
-	@$(call _npm,run knip) || true
+	@$(call _npm,run knip)
 
 frontend-format-check: ## Check SPA formatting with Prettier
 	@echo "🎨 Checking frontend formatting (Prettier)..."

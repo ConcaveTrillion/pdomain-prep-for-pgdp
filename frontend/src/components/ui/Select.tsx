@@ -121,25 +121,3 @@ export function SelectItem({
     </RadixSelect.Item>
   );
 }
-
-export interface SelectGroupProps {
-  children: ReactNode;
-}
-
-export function SelectGroup({ children }: SelectGroupProps) {
-  return <RadixSelect.Group>{children}</RadixSelect.Group>;
-}
-
-export interface SelectLabelProps {
-  children: ReactNode;
-  className?: string;
-}
-
-export function SelectLabel({ children, className }: SelectLabelProps) {
-  return (
-    <RadixSelect.Label className={className}>{children}</RadixSelect.Label>
-  );
-}
-
-// eslint-disable-next-line react-refresh/only-export-components
-export const SelectSeparator = RadixSelect.Separator;

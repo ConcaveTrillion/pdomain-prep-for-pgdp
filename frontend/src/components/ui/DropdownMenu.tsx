@@ -16,11 +16,9 @@ import { cn } from "@/lib/utils";
 
 export const DropdownMenu = DropdownMenuPrimitive.Root;
 export const DropdownMenuTrigger = DropdownMenuPrimitive.Trigger;
-export const DropdownMenuGroup = DropdownMenuPrimitive.Group;
 export const DropdownMenuSeparator = DropdownMenuPrimitive.Separator;
 export const DropdownMenuSub = DropdownMenuPrimitive.Sub;
 export const DropdownMenuSubTrigger = DropdownMenuPrimitive.SubTrigger;
-export const DropdownMenuPortal = DropdownMenuPrimitive.Portal;
 
 export function DropdownMenuContent({
   className,

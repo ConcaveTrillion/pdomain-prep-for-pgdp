@@ -15,7 +15,7 @@
  * exported shape.
  */
 
-export type DiffKind = "equal" | "delete" | "insert";
+type DiffKind = "equal" | "delete" | "insert";
 
 export interface DiffLine {
   kind: DiffKind;
