@@ -1,11 +1,19 @@
+// uiPrefs.test.ts — Phase 2.5 store tests.
+//
+// The store was migrated from zustand `create` + `persist` middleware to a
+// plain `createStore` with manual localStorage (key: "pgdp.uiPrefs").
+// The persist-middleware envelope ({state:{theme}}) is gone — theme is now
+// stored as a bare string.
+
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { useUiPrefs } from "./uiPrefs";
+import { useUiPrefs, THEME_STORAGE_KEY } from "./uiPrefs";
 
 describe("useUiPrefs", () => {
   beforeEach(() => {
     localStorage.clear();
+    // Reset store state directly (setState merges, so we cover both fields).
     useUiPrefs.setState({ theme: "light", searchOpen: false });
-    // Reset attribute after setState (subscribe fires and sets "light")
+    // Remove DOM attribute set by previous test's applyTheme.
     document.documentElement.removeAttribute("data-theme");
   });
 
@@ -35,24 +43,28 @@ describe("useUiPrefs", () => {
   });
 
   describe("persistence (localStorage)", () => {
-    it("persists theme to localStorage after setTheme", async () => {
+    it("persists theme to localStorage after setTheme (bare string, not envelope)", () => {
       useUiPrefs.getState().setTheme("dark");
-      // persist middleware writes on next microtask
-      await new Promise((r) => setTimeout(r, 0));
-      const stored = localStorage.getItem("pgdp.uiPrefs");
-      expect(stored).not.toBeNull();
-      const parsed = JSON.parse(stored!);
-      expect(parsed.state.theme).toBe("dark");
+      const stored = localStorage.getItem(THEME_STORAGE_KEY);
+      expect(stored).toBe("dark");
     });
 
-    it("does not persist searchOpen", async () => {
+    it("persists 'light' theme", () => {
+      useUiPrefs.getState().setTheme("light");
+      expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("light");
+    });
+
+    it("persists 'system' theme", () => {
+      useUiPrefs.getState().setTheme("system");
+      expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("system");
+    });
+
+    it("does not persist searchOpen to localStorage", () => {
       useUiPrefs.getState().setSearchOpen(true);
-      await new Promise((r) => setTimeout(r, 0));
-      const stored = localStorage.getItem("pgdp.uiPrefs");
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        expect(parsed.state.searchOpen).toBeUndefined();
-      }
+      // Only theme writes to localStorage; searchOpen has no persistence.
+      const stored = localStorage.getItem(THEME_STORAGE_KEY);
+      // Nothing should have been written (theme wasn't touched).
+      expect(stored).toBeNull();
     });
   });
 

@@ -15,7 +15,9 @@
 //
 // GAP-2: GET /api/ui-prefs backend endpoint not yet implemented — uiPrefsConfig
 //         load() returns localStorage-seeded defaults; persist callbacks write to
-//         localStorage as a stopgap. Full server-side persistence deferred to Phase 2.5.
+//         localStorage as a stopgap. Full server-side persistence deferred to
+//         when pd-ocr-ops mounts /api/ui-prefs in the FastAPI app.
+//         Phase 2.5: shim reconciled — reads/writes bare string (not JSON envelope).
 //
 // GAP-3: POST /api/ui-prefs backend endpoint not yet implemented — same as GAP-2.
 //
@@ -51,7 +53,7 @@ import { HotkeyHelpModal } from "./components/shell/HotkeyHelpModal";
 import { SearchModal } from "./components/shell/SearchModal";
 import { TopNav } from "./components/shell/TopNav";
 import { UserMenu } from "./components/shell/UserMenu";
-import { useUiPrefs } from "./stores/uiPrefs";
+import { useUiPrefs, THEME_STORAGE_KEY } from "./stores/uiPrefs";
 
 type ReviewStatusResponse = components["schemas"]["ReviewStatusResponse"];
 import { JobsPage } from "./pages/JobsPage";
@@ -64,45 +66,60 @@ import { ProjectReviewQueuePage } from "./pages/ProjectReviewQueuePage";
 import { TextReviewPage } from "./pages/TextReviewPage";
 import { CropsGridPage } from "./pages/CropsGridPage";
 
-// ── Phase 2.4: UIPrefsConfig shim (GAP-2, GAP-3) ───────────────────────────
+// ── Phase 2.5: UIPrefsConfig shim (GAP-2, GAP-3 reconciled) ────────────────
 //
 // The backend does not yet expose GET/POST /api/ui-prefs endpoints.
-// `load` returns a baseline UIPrefs object seeded from localStorage theme;
-// `persistCommon` writes to localStorage as a stopgap.
-// Full server-side persistence is deferred to Phase 2.5.
+// Phase 2.5 reconciliation: the local uiPrefs.ts store now writes theme as
+// a bare string to THEME_STORAGE_KEY ("pgdp.uiPrefs"). The load() and
+// persistCommon() shims read/write the same bare-string format so both
+// stores stay in sync via localStorage.
+//
+// GAP-2: GET /api/ui-prefs not yet implemented — load() seeds from localStorage.
+// GAP-3: POST /api/ui-prefs not yet implemented — persistCommon writes to localStorage.
+// Full server-side persistence is deferred until pd-ocr-ops mounts /api/ui-prefs.
+//
+// GAP-5 (from uiPrefs.ts): pd-ui's UIPrefs.theme is 'dark' | 'light' (no
+// 'system'). The local store supports 'system'; when theme is 'system' the
+// pd-ui AppShell receives the resolved effective value ('dark' or 'light').
 const UI_PREFS_CONFIG: UIPrefsConfig = {
   load: async () => {
-    // Seed theme from localStorage (matches the local uiPrefs.ts zustand store key).
+    // Seed theme from localStorage bare string (Phase 2.5 format).
+    // Fall back to effective resolved value if theme is 'system'.
     let theme: "dark" | "light" = "light";
     try {
-      const raw = localStorage.getItem("pgdp.uiPrefs");
-      if (raw) {
-        const parsed = JSON.parse(raw) as { state?: { theme?: string } };
-        if (parsed.state?.theme === "dark") theme = "dark";
+      const raw = localStorage.getItem(THEME_STORAGE_KEY);
+      if (raw === "dark") theme = "dark";
+      else if (raw === "light") theme = "light";
+      else if (raw === "system") {
+        // Resolve 'system' to effective value for pd-ui's factory (no 'system' in UIPrefs).
+        try {
+          theme = window.matchMedia("(prefers-color-scheme: dark)").matches
+            ? "dark"
+            : "light";
+        } catch {
+          theme = "light";
+        }
       }
     } catch {
-      // localStorage unavailable or parse error
+      // localStorage unavailable or unexpected error
     }
     return { theme, density: "normal", fontScale: 1.0 };
   },
   persistCommon: async (prefs) => {
-    // GAP-2: no backend — merge theme back into the zustand localStorage key.
+    // GAP-2: no backend — write theme back to localStorage as bare string.
+    // Only writes 'dark' or 'light'; 'system' is the local store's concern.
     try {
-      const raw = localStorage.getItem("pgdp.uiPrefs");
-      const existing = raw
-        ? (JSON.parse(raw) as { state?: Record<string, unknown> })
-        : { state: {} };
-      const merged = {
-        ...existing,
-        state: { ...(existing.state ?? {}), theme: prefs.theme },
-      };
-      localStorage.setItem("pgdp.uiPrefs", JSON.stringify(merged));
+      const current = localStorage.getItem(THEME_STORAGE_KEY);
+      // Don't overwrite 'system' with its resolved value — let the local store own that.
+      if (current !== "system") {
+        localStorage.setItem(THEME_STORAGE_KEY, prefs.theme);
+      }
     } catch {
       // ignore
     }
   },
   persistApp: async (_appPrefs) => {
-    // GAP-3: no backend — no-op until Phase 2.5.
+    // GAP-3: no backend — no-op until pd-ocr-ops mounts /api/ui-prefs.
   },
 };
 
