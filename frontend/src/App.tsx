@@ -1,3 +1,29 @@
+// App.tsx — SPA root: router, QueryClient provider, and route table.
+//
+// Phase 2.4: replaced local AppShell wrapper with pd-ui AppShell (#266).
+//
+// Slot mapping vs former local layout (components/shell/AppShell.tsx):
+//   header   ← TopNav (was header slot of custom AppShell)
+//   main     ← Routes block + banners + SearchModal + HotkeyHelpModal
+//   footer   — pd-ui AppShell has no footer zone (GAP-1); ServerInfoFooter
+//              is kept app-local inside the main slot using flex-col layout.
+//
+// GAP-1: pd-ui AppShell has no footer zone. ServerInfoFooter (formerly in
+//         the 32px footer grid row of components/shell/AppShell.tsx) is
+//         kept app-local: rendered as a flex-col sibling of the routes div
+//         inside the `main` slot. Resolve if pd-ui adds a footer zone.
+//
+// GAP-2: GET /api/ui-prefs backend endpoint not yet implemented — uiPrefsConfig
+//         load() returns localStorage-seeded defaults; persist callbacks write to
+//         localStorage as a stopgap. Full server-side persistence deferred to Phase 2.5.
+//
+// GAP-3: POST /api/ui-prefs backend endpoint not yet implemented — same as GAP-2.
+//
+// GAP-4: GET /api/suite/installed + POST /api/suite/launch backend endpoints not
+//         yet implemented. SuiteSiblingsProvider fetchInstalled returns [] (no-op);
+//         postLaunch returns requires-host-config. Real wiring blocked on pd-ocr-ops
+//         mounting /api/suite/* routes in the FastAPI app.
+
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import {
@@ -9,12 +35,18 @@ import {
   useNavigate,
 } from "react-router-dom";
 import { useHotkeys } from "react-hotkeys-hook";
+import {
+  AppShell,
+  SuiteSiblingsProvider,
+  type UIPrefsConfig,
+  type InstalledApp,
+  type LaunchResult,
+} from "@concavetrillion/pd-ui/shell";
 import { api, getAuthToken } from "./api/client";
 import type { components } from "./api/types.gen";
 import { AwaitingReviewBanner } from "./components/AwaitingReviewBanner";
 import { ServerInfoFooter } from "./components/ServerInfoFooter";
 import { TooltipProvider } from "./components/ui/Tooltip";
-import { AppShell } from "./components/shell/AppShell";
 import { HotkeyHelpModal } from "./components/shell/HotkeyHelpModal";
 import { SearchModal } from "./components/shell/SearchModal";
 import { TopNav } from "./components/shell/TopNav";
@@ -32,6 +64,71 @@ import { ProjectReviewQueuePage } from "./pages/ProjectReviewQueuePage";
 import { TextReviewPage } from "./pages/TextReviewPage";
 import { CropsGridPage } from "./pages/CropsGridPage";
 
+// ── Phase 2.4: UIPrefsConfig shim (GAP-2, GAP-3) ───────────────────────────
+//
+// The backend does not yet expose GET/POST /api/ui-prefs endpoints.
+// `load` returns a baseline UIPrefs object seeded from localStorage theme;
+// `persistCommon` writes to localStorage as a stopgap.
+// Full server-side persistence is deferred to Phase 2.5.
+const UI_PREFS_CONFIG: UIPrefsConfig = {
+  load: async () => {
+    // Seed theme from localStorage (matches the local uiPrefs.ts zustand store key).
+    let theme: "dark" | "light" = "light";
+    try {
+      const raw = localStorage.getItem("pgdp.uiPrefs");
+      if (raw) {
+        const parsed = JSON.parse(raw) as { state?: { theme?: string } };
+        if (parsed.state?.theme === "dark") theme = "dark";
+      }
+    } catch {
+      // localStorage unavailable or parse error
+    }
+    return { theme, density: "normal", fontScale: 1.0 };
+  },
+  persistCommon: async (prefs) => {
+    // GAP-2: no backend — merge theme back into the zustand localStorage key.
+    try {
+      const raw = localStorage.getItem("pgdp.uiPrefs");
+      const existing = raw
+        ? (JSON.parse(raw) as { state?: Record<string, unknown> })
+        : { state: {} };
+      const merged = {
+        ...existing,
+        state: { ...(existing.state ?? {}), theme: prefs.theme },
+      };
+      localStorage.setItem("pgdp.uiPrefs", JSON.stringify(merged));
+    } catch {
+      // ignore
+    }
+  },
+  persistApp: async (_appPrefs) => {
+    // GAP-3: no backend — no-op until Phase 2.5.
+  },
+};
+
+// ── Phase 2.4: SuiteSiblings fetch/launch shims (GAP-4) ─────────────────────
+//
+// The backend does not yet expose /api/suite/installed or /api/suite/launch.
+// fetchInstalled returns an empty list (no siblings shown in launcher).
+// postLaunch returns requires-host-config.
+async function fetchInstalled(): Promise<InstalledApp[]> {
+  // GAP-4: when pd-ocr-ops mounts /api/suite/* in FastAPI, replace with:
+  //   const res = await fetch("/api/suite/installed");
+  //   if (!res.ok) return [];
+  //   return (await res.json()) as InstalledApp[];
+  return [];
+}
+
+async function postLaunch(id: string): Promise<LaunchResult> {
+  // GAP-4: when pd-ocr-ops mounts /api/suite/* in FastAPI, replace with:
+  //   const res = await fetch(`/api/suite/launch`, {
+  //     method: "POST", body: JSON.stringify({ id }),
+  //     headers: { "Content-Type": "application/json" },
+  //   });
+  //   return (await res.json()) as LaunchResult;
+  return { kind: "requires-host-config", siblingId: id };
+}
+
 export default function App() {
   const { setSearchOpen } = useUiPrefs();
   const projectMatch = useMatch("/projects/:projectId/*");
@@ -41,70 +138,99 @@ export default function App() {
 
   return (
     <TooltipProvider>
-      <SearchModal />
-      <HotkeyHelpModal
-        open={hotkeyHelpOpen}
-        onClose={() => setHotkeyHelpOpen(false)}
-      />
-      <AppShell
-        header={
-          <TopNav
-            centerSlot={
-              <button
-                onClick={() => setSearchOpen(true)}
-                className="flex w-full items-center gap-2 rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-400 hover:border-slate-600 hover:text-slate-300 transition-colors"
-                aria-label="Search (⌘K)"
-              >
-                <span className="flex-1 text-left">Search projects…</span>
-                <kbd className="ml-auto text-xs text-slate-500 font-mono">
-                  ⌘K
-                </kbd>
-              </button>
+      {/*
+       * Phase 2.4: SuiteSiblingsProvider supplies the launcher context
+       * that pd-ui AppShell's LauncherSlot reads via useSuiteSiblingsContext().
+       * fetchInstalled / postLaunch are shims (GAP-4) until pd-ocr-ops
+       * mounts /api/suite/* in the FastAPI app.
+       */}
+      <SuiteSiblingsProvider value={{ fetchInstalled, postLaunch }}>
+        {/*
+         * Outer wrapper preserves data-testid="app-shell" for any integration
+         * tests or Playwright selectors that anchor on the shell root.
+         */}
+        <div data-testid="app-shell" className="h-screen w-full">
+          <AppShell
+            appId="pd-prep-for-pgdp"
+            appDisplayName="pgdp-prep"
+            appIconUrl="/static/icon.svg"
+            launcherSlot="header"
+            deployMode="local"
+            uiPrefsConfig={UI_PREFS_CONFIG}
+            header={
+              <TopNav
+                centerSlot={
+                  <button
+                    onClick={() => setSearchOpen(true)}
+                    className="flex w-full items-center gap-2 rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-400 hover:border-slate-600 hover:text-slate-300 transition-colors"
+                    aria-label="Search (⌘K)"
+                  >
+                    <span className="flex-1 text-left">Search projects…</span>
+                    <kbd className="ml-auto text-xs text-slate-500 font-mono">
+                      ⌘K
+                    </kbd>
+                  </button>
+                }
+                rightSlot={
+                  <>
+                    <OpenTasksBell />
+                    <UserMenu />
+                  </>
+                }
+              />
             }
-            rightSlot={
-              <>
-                <OpenTasksBell />
-                <UserMenu />
-              </>
+            main={
+              /*
+               * GAP-1: pd-ui AppShell has no footer zone. ServerInfoFooter
+               * is kept app-local as a flex-col sibling of the routes div,
+               * pinned to the bottom of the main zone via flex layout.
+               */
+              <div className="flex flex-col h-full overflow-hidden">
+                <SearchModal />
+                <HotkeyHelpModal
+                  open={hotkeyHelpOpen}
+                  onClose={() => setHotkeyHelpOpen(false)}
+                />
+                <AuthGuard />
+                {/* Global banner slot — rendered above all page content */}
+                <div className="banner-slot mx-auto max-w-7xl px-4 pt-4 space-y-2">
+                  {projectMatch && <AwaitingReviewBanner />}
+                </div>
+                <div className="flex-1 overflow-auto mx-auto max-w-7xl p-4 w-full">
+                  <Routes>
+                    <Route path="/login" element={<LoginPage />} />
+                    <Route path="/" element={<ProjectListPage />} />
+                    <Route path="/jobs" element={<JobsPage />} />
+                    <Route
+                      path="/projects/:projectId"
+                      element={<ProjectConfigurePage />}
+                    />
+                    <Route
+                      path="/projects/:projectId/pages/:idx0"
+                      element={<PageWorkbenchPage />}
+                    />
+                    <Route
+                      path="/projects/:projectId/pages/:idx0/review"
+                      element={<TextReviewPage />}
+                    />
+                    <Route
+                      path="/projects/:projectId/crops"
+                      element={<CropsGridPage />}
+                    />
+                    <Route
+                      path="/projects/:projectId/review"
+                      element={<ProjectReviewQueuePage />}
+                    />
+                    <Route path="/settings" element={<SettingsPage />} />
+                  </Routes>
+                </div>
+                {/* GAP-1: ServerInfoFooter pinned at bottom of main zone */}
+                <ServerInfoFooter />
+              </div>
             }
           />
-        }
-        footer={<ServerInfoFooter />}
-      >
-        <AuthGuard />
-        {/* Global banner slot — rendered above all page content */}
-        <div className="banner-slot mx-auto max-w-7xl px-4 pt-4 space-y-2">
-          {projectMatch && <AwaitingReviewBanner />}
         </div>
-        <div className="mx-auto max-w-7xl p-4">
-          <Routes>
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/" element={<ProjectListPage />} />
-            <Route path="/jobs" element={<JobsPage />} />
-            <Route
-              path="/projects/:projectId"
-              element={<ProjectConfigurePage />}
-            />
-            <Route
-              path="/projects/:projectId/pages/:idx0"
-              element={<PageWorkbenchPage />}
-            />
-            <Route
-              path="/projects/:projectId/pages/:idx0/review"
-              element={<TextReviewPage />}
-            />
-            <Route
-              path="/projects/:projectId/crops"
-              element={<CropsGridPage />}
-            />
-            <Route
-              path="/projects/:projectId/review"
-              element={<ProjectReviewQueuePage />}
-            />
-            <Route path="/settings" element={<SettingsPage />} />
-          </Routes>
-        </div>
-      </AppShell>
+      </SuiteSiblingsProvider>
     </TooltipProvider>
   );
 }
