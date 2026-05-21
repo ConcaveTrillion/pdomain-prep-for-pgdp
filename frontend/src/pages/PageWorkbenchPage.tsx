@@ -1,13 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import {
-  Image as KonvaImage,
-  Layer,
-  Rect,
-  Stage,
-  Transformer,
-} from "react-konva";
+import { Rect, Transformer } from "react-konva";
 import type Konva from "konva";
+import { PageImageCanvas } from "@concavetrillion/pd-ui/canvas";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import type { components } from "../api/types.gen";
@@ -509,6 +504,30 @@ export function PageWorkbenchPage() {
 }
 
 // ─── Canvas (Konva) — view + drag-to-create ─────────────────────────────────
+//
+// Phase 2.2: Migrated from raw Konva Stage + KonvaImage to pd-ui's
+// PageImageCanvas as the canvas host. Slot mapping:
+//
+//   image     — page bitmap (managed entirely by pd-ui)
+//   tool      — split/illustration Rects + Transformer + drag-preview Rect
+//               (tool layer has listening=true → Konva hit detection works)
+//
+// Pointer events for drag-to-create-rect use a DOM event-capture overlay
+// (same GAP-1 shim pattern as pd-ocr-labeler-spa and WordBboxOverlay).
+//
+// Capability gaps vs plain local implementation:
+//   GAP-1: Rotate mode's Konva Transformer-on-image is NOT ported.
+//          pd-ui manages the image Layer internally and does not expose
+//          the image node ref, so we cannot attach a Transformer to it.
+//          The discrete rotate buttons (90° CW, 90° CCW, 180°) and the
+//          PATCH-based Apply/Reset path work unchanged — only the
+//          drag-rotate interaction is unavailable in rotate mode.
+//          TODO: when pd-ui exposes `imageNodeRef`, wire Transformer there.
+//   GAP-2: pd-ui's Stage applies scaleX/scaleY at the Stage level. Konva
+//          node positions inside slot fills are therefore in natural-pixel
+//          space. rectFromNode now uses scale=1 (natural coords are already
+//          natural). Drag-to-create rect math is also in natural-pixel space
+//          via the DOM event-capture overlay's coordinate conversion.
 
 type Selection =
   | { kind: "split"; suffix: string }
@@ -549,16 +568,13 @@ function CanvasViewer({
     B: number;
   }) => void;
 }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const stageRef = useRef<Konva.Stage>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
-  const imageRef = useRef<Konva.Image>(null);
   const rectRefs = useRef<Map<string, Konva.Rect>>(new Map());
-  const [containerW, setContainerW] = useState(800);
-  const [img, setImg] = useState<HTMLImageElement | null>(null);
-  const [drawStart, setDrawStart] = useState<{ x: number; y: number } | null>(
-    null,
-  );
+  const [naturalSize, setNaturalSize] = useState<{
+    w: number;
+    h: number;
+  } | null>(null);
+  const drawAnchorRef = useRef<{ x: number; y: number } | null>(null);
   const [dragRect, setDragRect] = useState<{
     x: number;
     y: number;
@@ -567,46 +583,36 @@ function CanvasViewer({
   } | null>(null);
   const [selection, setSelection] = useState<Selection>(null);
 
+  // Preload the image to get natural dimensions for pd-ui's page prop.
   useEffect(() => {
     const el = new Image();
     el.crossOrigin = "anonymous";
     el.src = imageKey;
-    el.onload = () => setImg(el);
+    el.onload = () =>
+      setNaturalSize({ w: el.naturalWidth, h: el.naturalHeight });
     return () => {
       el.onload = null;
     };
   }, [imageKey]);
 
-  useEffect(() => {
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        setContainerW(entry.contentRect.width);
-      }
-    });
-    if (containerRef.current) observer.observe(containerRef.current);
-    return () => observer.disconnect();
-  }, []);
-
-  const scale = img ? containerW / img.naturalWidth : 1;
-  const stageH = img ? Math.round(img.naturalHeight * scale) : 600;
-  // Drawing (marquee) must be disabled in rotate mode — the Konva transformer
-  // handles interaction there, and mousedown/up for drawing would interfere.
+  // Drawing (drag-to-create) is disabled in view and rotate modes.
+  // GAP-1: rotate mode no longer drives a Transformer; the overlay
+  // cursor still changes to indicate the mode, but drag does nothing.
   const drawingEnabled = editMode !== "view" && editMode !== "rotate";
 
-  // Attach the Transformer to the image (rotate mode) or to the selected rect
-  // (split/illustration modes). Both cases are handled in one effect so that
-  // the rotate path can reliably override whatever rect was previously attached.
+  // Attach the Transformer to the selected rect (split/illustration modes).
+  // GAP-1: rotate mode Transformer-on-image removed (see file header).
   useEffect(() => {
     const tr = transformerRef.current;
     if (!tr) return;
-    if (editMode === "rotate" && imageRef.current) {
-      tr.nodes([imageRef.current]);
-      tr.rotateEnabled(true);
+    if (editMode === "rotate") {
+      // GAP-1: Cannot attach Transformer to pd-ui's internal image node.
+      // Clear any previously attached rect so the transformer is idle.
+      tr.nodes([]);
+      tr.rotateEnabled(false);
       tr.resizeEnabled(false);
-      tr.borderEnabled(true);
       tr.getLayer()?.batchDraw();
     } else {
-      // Returning from rotate mode (or normal rect-select behaviour).
       const key = selection ? selectionKey(selection) : null;
       const node = key ? rectRefs.current.get(key) : null;
       tr.nodes(node ? [node] : []);
@@ -615,103 +621,117 @@ function CanvasViewer({
       tr.borderEnabled(true);
       tr.getLayer()?.batchDraw();
     }
-  }, [editMode, selection, page.splits, page.illustration_regions, img]);
+  }, [editMode, selection, page.splits, page.illustration_regions]);
 
-  // Must run after the transformer effect (both fire on editMode change).
-  // Setting node.rotation after the transformer is attached prevents a
-  // single-frame rotation flash; React 18 batches both in the same commit.
-  useEffect(() => {
-    const node = imageRef.current;
-    if (!node) return;
-    if (editMode === "rotate") {
-      node.rotation(draftAngle);
-    } else {
-      // Reset visual rotation when leaving rotate mode.
-      node.rotation(0);
-    }
-    node.getLayer()?.batchDraw();
-  }, [editMode, draftAngle, img]);
+  // GAP-1: draftAngle visual feedback via CSS transform on the container
+  // div (rotate mode). This preserves the visual preview without needing
+  // access to pd-ui's internal Konva image node.
+  const rotateStyle =
+    editMode === "rotate" && draftAngle !== 0
+      ? { transform: `rotate(${draftAngle}deg)`, transformOrigin: "center" }
+      : undefined;
 
-  // Click-on-empty-stage clears the selection. The Transformer + the rects
-  // themselves stop the click via stopPropagation.
-  const handleStageClick = (e: Konva.KonvaEventObject<MouseEvent>) => {
-    if (drawingEnabled) return;
-    if (e.target === e.target.getStage()) setSelection(null);
-  };
+  if (!naturalSize) {
+    return (
+      <div className="rounded border bg-white" style={{ minHeight: 400 }}>
+        <div className="flex h-96 items-center justify-center text-slate-400">
+          Loading image…
+        </div>
+      </div>
+    );
+  }
 
-  const handleMouseDown = () => {
-    if (!drawingEnabled) return;
-    const stage = stageRef.current;
-    const pos = stage?.getPointerPosition();
-    if (!pos) return;
-    setDrawStart({ x: pos.x, y: pos.y });
-    setDragRect({ x: pos.x, y: pos.y, w: 0, h: 0 });
-  };
+  const { w: naturalW, h: naturalH } = naturalSize;
+  const pdUiPage = { width: naturalW, height: naturalH };
 
-  const handleMouseMove = () => {
-    if (!drawingEnabled || !drawStart) return;
-    const pos = stageRef.current?.getPointerPosition();
-    if (!pos) return;
-    setDragRect({
-      x: Math.min(drawStart.x, pos.x),
-      y: Math.min(drawStart.y, pos.y),
-      w: Math.abs(pos.x - drawStart.x),
-      h: Math.abs(pos.y - drawStart.y),
-    });
-  };
-
-  const handleMouseUp = () => {
-    if (!drawingEnabled || !drawStart || !dragRect) {
-      setDrawStart(null);
-      setDragRect(null);
-      return;
-    }
-    if (dragRect.w >= 8 && dragRect.h >= 8) {
-      const rect = {
-        L: Math.round(dragRect.x / scale),
-        R: Math.round((dragRect.x + dragRect.w) / scale),
-        T: Math.round(dragRect.y / scale),
-        B: Math.round((dragRect.y + dragRect.h) / scale),
-      };
-      if (editMode === "split") onDrawSplit(rect);
-      else if (editMode === "illustration") onDrawRegion(rect);
-      else if (editMode === "create-sibling") onCaptureSiblingBbox(rect);
-    }
-    setDrawStart(null);
-    setDragRect(null);
+  /**
+   * Convert a DOM clientX/Y (in the event-capture overlay) to natural-pixel
+   * space. The overlay covers the entire canvas area; its width/height is the
+   * displayed canvas size. Natural coords = DOM coords * (naturalW / displayW).
+   */
+  const clientToNatural = (
+    clientX: number,
+    clientY: number,
+    overlay: HTMLElement,
+  ): { x: number; y: number } => {
+    const r = overlay.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return { x: 0, y: 0 };
+    return {
+      x: (clientX - r.left) * (naturalW / r.width),
+      y: (clientY - r.top) * (naturalH / r.height),
+    };
   };
 
   return (
     <div
-      ref={containerRef}
-      className="rounded border bg-white"
-      style={{ minHeight: 400 }}
+      className="rounded border bg-white relative"
+      style={{ minHeight: 400, ...rotateStyle }}
     >
-      {img ? (
-        <Stage
-          ref={stageRef}
-          width={containerW}
-          height={stageH}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onClick={handleStageClick}
-          style={{ cursor: drawingEnabled ? "crosshair" : "default" }}
-        >
-          <Layer>
-            <KonvaImage
-              ref={imageRef}
-              image={img}
-              scaleX={scale}
-              scaleY={scale}
-            />
-            {(page.illustration_regions as IllustrationRegion[]).map(
-              (region) => {
-                const key = `region-${region.index}`;
-                const x = (region.L ?? 0) * scale;
-                const y = (region.T ?? 0) * scale;
-                const w = ((region.R ?? 0) - (region.L ?? 0)) * scale;
-                const h = ((region.B ?? 0) - (region.T ?? 0)) * scale;
+      {/* ── pd-ui PageImageCanvas — Konva Stage host ──────────────────────
+          Provides: image layer, Stage setup, ResizeObserver for container
+          size. Split/illustration Rects + Transformer + drag-preview go
+          in the tool slot (has listening=true → Konva events work). */}
+      <PageImageCanvas
+        src={imageKey}
+        page={pdUiPage}
+        words={[]}
+        fitOnMount={true}
+      >
+        {{
+          // ── tool slot: interactive Rects + Transformer + drag-preview ──
+          // Layer name="tool" has no listening=false, so Konva hit
+          // detection fires on Rects here (click, drag, transform).
+          // Coordinates are in natural-pixel space (pd-ui scales the Stage).
+          tool: () => (
+            <>
+              {(page.illustration_regions as IllustrationRegion[]).map(
+                (region) => {
+                  const key = `region-${region.index}`;
+                  return (
+                    <Rect
+                      key={key}
+                      ref={(node) => {
+                        if (node) rectRefs.current.set(key, node);
+                        else rectRefs.current.delete(key);
+                      }}
+                      x={region.L ?? 0}
+                      y={region.T ?? 0}
+                      width={(region.R ?? 0) - (region.L ?? 0)}
+                      height={(region.B ?? 0) - (region.T ?? 0)}
+                      stroke="rgba(220,38,38,0.9)"
+                      strokeWidth={2}
+                      dash={[6, 4]}
+                      draggable={!drawingEnabled}
+                      onClick={(e) => {
+                        e.cancelBubble = true;
+                        if (!drawingEnabled)
+                          setSelection({
+                            kind: "region",
+                            index: region.index,
+                          });
+                      }}
+                      onDragEnd={(e) =>
+                        onUpdateRegion(region.index, rectFromNode(e.target))
+                      }
+                      onTransformEnd={(e) => {
+                        onUpdateRegion(region.index, rectFromNode(e.target));
+                        // Reset scale on the node after committing — Konva
+                        // applies scale during transform, but we want
+                        // width/height to be the source of truth.
+                        const node = e.target;
+                        const newW = node.width() * node.scaleX();
+                        const newH = node.height() * node.scaleY();
+                        node.scaleX(1);
+                        node.scaleY(1);
+                        node.width(newW);
+                        node.height(newH);
+                      }}
+                    />
+                  );
+                },
+              )}
+              {(page.splits as PageSplit[]).map((split) => {
+                const key = `split-${split.suffix}`;
                 return (
                   <Rect
                     key={key}
@@ -719,33 +739,27 @@ function CanvasViewer({
                       if (node) rectRefs.current.set(key, node);
                       else rectRefs.current.delete(key);
                     }}
-                    x={x}
-                    y={y}
-                    width={w}
-                    height={h}
-                    stroke="rgba(220,38,38,0.9)"
+                    x={split.L ?? 0}
+                    y={split.T ?? 0}
+                    width={(split.R ?? naturalW) - (split.L ?? 0)}
+                    height={(split.B ?? naturalH) - (split.T ?? 0)}
+                    stroke="rgba(37,99,235,0.9)"
                     strokeWidth={2}
-                    dash={[6, 4]}
+                    dash={[2, 4]}
                     draggable={!drawingEnabled}
                     onClick={(e) => {
                       e.cancelBubble = true;
                       if (!drawingEnabled)
-                        setSelection({ kind: "region", index: region.index });
+                        setSelection({
+                          kind: "split",
+                          suffix: split.suffix,
+                        });
                     }}
                     onDragEnd={(e) =>
-                      onUpdateRegion(
-                        region.index,
-                        rectFromNode(e.target, scale),
-                      )
+                      onUpdateSplit(split.suffix, rectFromNode(e.target))
                     }
                     onTransformEnd={(e) => {
-                      onUpdateRegion(
-                        region.index,
-                        rectFromNode(e.target, scale),
-                      );
-                      // Reset scale on the node after committing — Konva
-                      // applies scale during transform, but we want width/
-                      // height to be the source of truth.
+                      onUpdateSplit(split.suffix, rectFromNode(e.target));
                       const node = e.target;
                       const newW = node.width() * node.scaleX();
                       const newH = node.height() * node.scaleY();
@@ -756,102 +770,106 @@ function CanvasViewer({
                     }}
                   />
                 );
-              },
-            )}
-            {(page.splits as PageSplit[]).map((split) => {
-              const key = `split-${split.suffix}`;
-              const x = (split.L ?? 0) * scale;
-              const y = (split.T ?? 0) * scale;
-              const w =
-                ((split.R ?? img.naturalWidth) - (split.L ?? 0)) * scale;
-              const h =
-                ((split.B ?? img.naturalHeight) - (split.T ?? 0)) * scale;
-              return (
-                <Rect
-                  key={key}
-                  ref={(node) => {
-                    if (node) rectRefs.current.set(key, node);
-                    else rectRefs.current.delete(key);
-                  }}
-                  x={x}
-                  y={y}
-                  width={w}
-                  height={h}
-                  stroke="rgba(37,99,235,0.9)"
-                  strokeWidth={2}
-                  dash={[2, 4]}
-                  draggable={!drawingEnabled}
-                  onClick={(e) => {
-                    e.cancelBubble = true;
-                    if (!drawingEnabled)
-                      setSelection({ kind: "split", suffix: split.suffix });
-                  }}
-                  onDragEnd={(e) =>
-                    onUpdateSplit(split.suffix, rectFromNode(e.target, scale))
-                  }
-                  onTransformEnd={(e) => {
-                    onUpdateSplit(split.suffix, rectFromNode(e.target, scale));
-                    const node = e.target;
-                    const newW = node.width() * node.scaleX();
-                    const newH = node.height() * node.scaleY();
-                    node.scaleX(1);
-                    node.scaleY(1);
-                    node.width(newW);
-                    node.height(newH);
-                  }}
-                />
-              );
-            })}
-            <Transformer
-              ref={transformerRef}
-              rotateEnabled={false}
-              flipEnabled={false}
-              boundBoxFunc={(oldBox, newBox) => {
-                // Constrain to a sensible minimum.
-                // In rotate mode resizing is disabled so this only fires for rects.
-                if (newBox.width < 8 || newBox.height < 8) return oldBox;
-                return newBox;
-              }}
-              // Konva's reconciler updates JSX event handlers on every render,
-              // so onRotate here always receives the current prop value even
-              // though it is captured in a closure.
-              onTransform={() => {
-                if (editMode === "rotate" && imageRef.current) {
-                  const rawAngle = imageRef.current.rotation();
-                  // Full modulo normalisation — handles arbitrary accumulated
-                  // rotations from repeated drag gestures. Single-pass clamp
-                  // (raw > 180 ? raw - 360 : ...) fails for |raw| > 360.
-                  // Examples: 0→0, 90→90, 270→-90, -270→90, 450→90, 360→0.
-                  const normalised = (((rawAngle % 360) + 540) % 360) - 180;
-                  onRotate(Number(normalised.toFixed(1)));
-                }
-              }}
-            />
-            {dragRect && (
-              <Rect
-                x={dragRect.x}
-                y={dragRect.y}
-                width={dragRect.w}
-                height={dragRect.h}
-                stroke={
-                  editMode === "split"
-                    ? "rgba(37,99,235,0.9)"
-                    : "rgba(220,38,38,0.9)"
-                }
-                strokeWidth={2}
-                fill={
-                  editMode === "split"
-                    ? "rgba(37,99,235,0.1)"
-                    : "rgba(220,38,38,0.1)"
-                }
+              })}
+              <Transformer
+                ref={transformerRef}
+                rotateEnabled={false}
+                flipEnabled={false}
+                boundBoxFunc={(oldBox, newBox) => {
+                  if (newBox.width < 8 || newBox.height < 8) return oldBox;
+                  return newBox;
+                }}
+                onTransform={() => {
+                  // GAP-1: Transformer is never attached to the image node
+                  // in rotate mode (pd-ui owns the image). onRotate is not
+                  // called here; it fires only via RotateToolbar buttons.
+                  // This handler is intentionally a no-op for the rotate
+                  // case. For rect transforms it does not need to call
+                  // onRotate either.
+                  void onRotate; // satisfy the linter — prop is used elsewhere
+                }}
               />
-            )}
-          </Layer>
-        </Stage>
-      ) : (
-        <div className="flex h-96 items-center justify-center text-slate-400">
-          Loading image…
-        </div>
+              {dragRect && (
+                <Rect
+                  x={dragRect.x}
+                  y={dragRect.y}
+                  width={dragRect.w}
+                  height={dragRect.h}
+                  stroke={
+                    editMode === "split"
+                      ? "rgba(37,99,235,0.9)"
+                      : "rgba(220,38,38,0.9)"
+                  }
+                  strokeWidth={2}
+                  fill={
+                    editMode === "split"
+                      ? "rgba(37,99,235,0.1)"
+                      : "rgba(220,38,38,0.1)"
+                  }
+                  listening={false}
+                />
+              )}
+            </>
+          ),
+        }}
+      </PageImageCanvas>
+
+      {/* ── Event-capture overlay (GAP-1 shim) ───────────────────────────────
+          Absolutely positioned over the entire canvas area. Captures all
+          mouse events for drag-to-create-rect so pd-ui's internal Stage
+          drag never fires. Handles drawing in split / illustration /
+          create-sibling modes. In view and rotate modes it is transparent
+          (pointer-events:none) so Konva events reach the tool slot Rects. */}
+      {drawingEnabled && (
+        <div
+          data-testid="canvas-draw-overlay"
+          style={{
+            position: "absolute",
+            inset: 0,
+            cursor: "crosshair",
+          }}
+          onMouseDown={(e) => {
+            const pt = clientToNatural(e.clientX, e.clientY, e.currentTarget);
+            drawAnchorRef.current = { x: pt.x, y: pt.y };
+            setDragRect({ x: pt.x, y: pt.y, w: 0, h: 0 });
+          }}
+          onMouseMove={(e) => {
+            const anchor = drawAnchorRef.current;
+            if (!anchor) return;
+            const pt = clientToNatural(e.clientX, e.clientY, e.currentTarget);
+            setDragRect({
+              x: Math.min(anchor.x, pt.x),
+              y: Math.min(anchor.y, pt.y),
+              w: Math.abs(pt.x - anchor.x),
+              h: Math.abs(pt.y - anchor.y),
+            });
+          }}
+          onMouseUp={(e) => {
+            const anchor = drawAnchorRef.current;
+            drawAnchorRef.current = null;
+            const localDragRect = dragRect;
+            setDragRect(null);
+            if (!anchor || !localDragRect) return;
+            if (localDragRect.w >= 8 && localDragRect.h >= 8) {
+              const pt = clientToNatural(e.clientX, e.clientY, e.currentTarget);
+              const rect = {
+                L: Math.round(Math.min(anchor.x, pt.x)),
+                R: Math.round(Math.max(anchor.x, pt.x)),
+                T: Math.round(Math.min(anchor.y, pt.y)),
+                B: Math.round(Math.max(anchor.y, pt.y)),
+              };
+              if (editMode === "split") onDrawSplit(rect);
+              else if (editMode === "illustration") onDrawRegion(rect);
+              else if (editMode === "create-sibling")
+                onCaptureSiblingBbox(rect);
+            }
+          }}
+          onMouseLeave={() => {
+            drawAnchorRef.current = null;
+            setDragRect(null);
+          }}
+          aria-hidden="true"
+        />
       )}
     </div>
   );
@@ -1283,20 +1301,28 @@ function selectionKey(s: NonNullable<Selection>): string {
   return s.kind === "split" ? `split-${s.suffix}` : `region-${s.index}`;
 }
 
-/** Read screen-space rect from a Konva.Rect node, convert back to source-image space. */
-function rectFromNode(
-  node: Konva.Node,
-  scale: number,
-): { L: number; R: number; T: number; B: number } {
+/**
+ * Read natural-pixel rect from a Konva.Rect node.
+ *
+ * Phase 2.2: pd-ui's Stage applies scaleX/scaleY at the Stage level, so
+ * node.x() / node.y() / node.width() / node.height() already return values
+ * in natural-pixel space. No division by `scale` is needed.
+ */
+function rectFromNode(node: Konva.Node): {
+  L: number;
+  R: number;
+  T: number;
+  B: number;
+} {
   const x = node.x();
   const y = node.y();
   const w = node.width() * node.scaleX();
   const h = node.height() * node.scaleY();
   return {
-    L: Math.round(x / scale),
-    R: Math.round((x + w) / scale),
-    T: Math.round(y / scale),
-    B: Math.round((y + h) / scale),
+    L: Math.round(x),
+    R: Math.round(x + w),
+    T: Math.round(y),
+    B: Math.round(y + h),
   };
 }
 

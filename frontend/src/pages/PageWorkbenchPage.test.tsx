@@ -20,7 +20,37 @@
 // chain at module-load time. jsdom has no canvas; PageWorkbenchPage's Konva
 // canvas would otherwise crash the test runner. Vitest hoists `vi.mock` calls
 // above imports so the page's transitive konva import resolves to these stubs.
+//
+// Phase 2.2: PageWorkbenchPage now also imports @concavetrillion/pd-ui/canvas
+// which itself imports react-konva. We mock pd-ui/canvas so that the slot fills
+// (tool slot) are invoked and rendered as plain DOM elements. The react-konva
+// mock still handles the Rect/Transformer primitives that CanvasViewer renders
+// inside the tool slot.
 import type { ReactNode } from "react";
+
+vi.mock("@concavetrillion/pd-ui/canvas", () => ({
+  PageImageCanvas: ({
+    children,
+  }: {
+    src?: string;
+    page?: { width: number; height: number };
+    words?: unknown[];
+    fitOnMount?: boolean;
+    children?: {
+      selection?: () => ReactNode;
+      tool?: () => ReactNode;
+      underlay?: () => ReactNode;
+      overlay?: () => ReactNode;
+      hud?: () => ReactNode;
+    };
+  }) => (
+    <div data-testid="pd-ui-canvas">
+      {children?.selection?.()}
+      {children?.tool?.()}
+    </div>
+  ),
+}));
+
 vi.mock("react-konva", () => ({
   Stage: ({
     children,

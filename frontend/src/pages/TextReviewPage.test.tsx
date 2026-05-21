@@ -38,17 +38,37 @@ type PageRecord = components["schemas"]["PageRecord"];
 import { server } from "../test/server";
 import { TextReviewPage } from "./TextReviewPage";
 
-// Defuse the `react-konva` -> `konva/lib/index-node.js` -> `require("canvas")`
-// chain at module-load time. jsdom has no canvas; `WordBboxOverlay`'s own
-// test (`components/WordBboxOverlay.test.tsx`) uses the same trick. Vitest
-// hoists `vi.mock` calls above the imports, so the page's transitive konva
-// import resolves to these stubs.
+// Phase 2.2: WordBboxOverlay now wraps @concavetrillion/pd-ui's
+// PageImageCanvas rather than rendering its own raw Konva Stage.
+// We mock pd-ui/canvas so that:
+//  1. No real canvas context is needed in jsdom.
+//  2. The slot-fill children (selection + tool) are invoked and rendered
+//     as plain DOM elements for inspection by the §9a select-and-delete tests.
 //
-// `Rect` surfaces as a clickable `<div>` so the §9a select-and-delete tests
-// can drive bbox clicks via Testing-Library. The earlier two tests
-// (save-lifecycle, re-OCR diff) never trigger the source `<img>`'s onLoad,
-// so `naturalSize` stays {0,0} and `WordBboxOverlay` early-returns before
-// any Rect mounts — they're unaffected by the change.
+// We still mock react-konva because react-konva/konva require a real canvas
+// context (via `require("canvas")`) and would crash in jsdom otherwise.
+// The slot fills render Konva Rects; the react-konva mock turns them into
+// <div>s so tests can inspect them.
+//
+// naturalSize stays {0,0} until the Image preload effect fires.
+// WordBboxOverlay early-returns null when naturalWidth/naturalHeight are 0,
+// so the §9a save-lifecycle and diff tests are unaffected (no Rects mount).
+vi.mock("@concavetrillion/pd-ui/canvas", () => ({
+  PageImageCanvas: ({
+    children,
+  }: {
+    children?: {
+      selection?: () => ReactNode;
+      tool?: () => ReactNode;
+    };
+  }) => (
+    <div data-testid="pd-ui-canvas">
+      {children?.selection?.()}
+      {children?.tool?.()}
+    </div>
+  ),
+}));
+
 vi.mock("react-konva", () => ({
   Stage: ({ children }: { children?: ReactNode }) => (
     <div data-testid="konva-stage">{children}</div>
@@ -310,43 +330,88 @@ describe("TextReviewPage save lifecycle", () => {
 });
 
 describe("TextReviewPage §9a delete-words flow", () => {
-  // Force `WordBboxOverlay` to render its mocked Rects. Two gates
-  // must fall together — the overlay early-returns on either alone:
-  //   1. `naturalSize` (set by `<img>`.onLoad) must be non-zero, and
-  //   2. the trackElement's getBoundingClientRect (read in the
-  //      overlay's first sync `update()` before the ResizeObserver
-  //      attaches) must be non-zero.
-  // jsdom's default `getBoundingClientRect()` is all zeroes, and
-  // the overlay's effect runs once on mount (deps are `[trackElement]`),
-  // so we must stub the rect on `HTMLImageElement.prototype` BEFORE
-  // the page mounts. fireImgLoad() then just sets natural dims and
-  // dispatches the load event so the parent's `setNaturalSize` flips.
-  // Restored in afterAll so the existing (save / re-OCR) describe
-  // blocks above retain jsdom's default 0×0 rect — those tests rely
-  // on `WordBboxOverlay` early-returning before any Rect mounts.
+  // Phase 2.2: WordBboxOverlay no longer renders a <img> element — it
+  // wraps pd-ui's PageImageCanvas (mocked here). The naturalSize state in
+  // TextReviewPage is now driven by a `useEffect` that calls `new Image()`
+  // and reads `img.naturalWidth/Height` on load.
+  //
+  // Two gates must fall together for WordBboxOverlay to render its word Rects:
+  //   1. `naturalSize` (set by the new Image() preload) must be non-zero.
+  //   2. `words.length > 0` (set by the page-text query response).
+  //
+  // We stub `window.Image` in beforeAll so that when TextReviewPage's
+  // useEffect calls `new Image()`, setting `.src` immediately fires `onload`
+  // with the configured natural dimensions. This replaces the old
+  // `fireImgLoad` DOM approach.
+  //
+  // Word selection is via the DOM event-capture overlay
+  // (`word-bbox-overlay-capture`) using fireEvent.mouseUp, not by clicking
+  // Konva Rect elements (the Rects are now in a listening=false Layer).
+  //
+  // Coordinate math (for word-click tests):
+  //   Words use naturalWidth=1000, naturalHeight=100.
+  //   The DOM overlay's getBoundingClientRect is stubbed to 1000×100
+  //   (matching natural dims → scaleX=1, scaleY=1 → DOM coord = natural coord).
+  //   w_alpha: left=0, width=50  → click at DOM (25, 10)
+  //   w_beta:  left=60, width=50 → click at DOM (85, 10)
+  //   w_gamma: left=120, width=50→ click at DOM (145, 10)
+
+  let originalImage: typeof Image;
   let originalGetBoundingClientRect:
-    | typeof HTMLImageElement.prototype.getBoundingClientRect
+    | typeof HTMLElement.prototype.getBoundingClientRect
     | undefined;
+
+  const NATURAL = { w: 1000, h: 100 };
+
   beforeAll(() => {
-    originalGetBoundingClientRect =
-      HTMLImageElement.prototype.getBoundingClientRect;
-    HTMLImageElement.prototype.getBoundingClientRect = function () {
+    // Stub window.Image so new Image() immediately fires onload with known dims.
+    originalImage = window.Image;
+    class FakeImage extends EventTarget {
+      naturalWidth = NATURAL.w;
+      naturalHeight = NATURAL.h;
+      crossOrigin: string | null = null;
+      private _src = "";
+      get src() {
+        return this._src;
+      }
+      set src(val: string) {
+        this._src = val;
+        // Fire onload synchronously when src is set.
+        if (
+          typeof (this as unknown as { onload: (() => void) | null }).onload ===
+          "function"
+        ) {
+          (this as unknown as { onload: () => void }).onload();
+        }
+      }
+      onload: (() => void) | null = null;
+    }
+    window.Image = FakeImage as unknown as typeof Image;
+
+    // Stub HTMLElement.prototype.getBoundingClientRect to return a non-zero
+    // rect for the event-capture overlay so coordinate conversion works.
+    // This stub applies to ALL elements so word-bbox-overlay-capture returns
+    // a 1000×100 rect (matching NATURAL dims → scale 1:1).
+    originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+    HTMLElement.prototype.getBoundingClientRect = function () {
       return {
-        width: 1000,
-        height: 100,
+        width: NATURAL.w,
+        height: NATURAL.h,
         top: 0,
         left: 0,
-        right: 1000,
-        bottom: 100,
+        right: NATURAL.w,
+        bottom: NATURAL.h,
         x: 0,
         y: 0,
         toJSON: () => ({}),
       };
     };
   });
+
   afterAll(() => {
+    window.Image = originalImage;
     if (originalGetBoundingClientRect) {
-      HTMLImageElement.prototype.getBoundingClientRect =
+      HTMLElement.prototype.getBoundingClientRect =
         originalGetBoundingClientRect;
     }
   });
@@ -355,18 +420,36 @@ describe("TextReviewPage §9a delete-words flow", () => {
   // advancement (undo expiry). See individual tests for vi.useFakeTimers()
   // calls. Tests that don't need fake timers use real timers.
 
-  function fireImgLoad(natural: { w: number; h: number }) {
-    const img = document.querySelector("img")!;
-    expect(img).not.toBeNull();
-    Object.defineProperty(img, "naturalWidth", {
-      configurable: true,
-      value: natural.w,
-    });
-    Object.defineProperty(img, "naturalHeight", {
-      configurable: true,
-      value: natural.h,
-    });
-    fireEvent.load(img);
+  /**
+   * Wait for the word-bbox-overlay-capture div to appear.
+   * It only renders when naturalSize is non-zero AND words.length > 0.
+   * Phase 2.2: triggered by the useEffect new Image() preload.
+   */
+  async function waitForOverlay() {
+    return screen.findByTestId("word-bbox-overlay-capture");
+  }
+
+  /**
+   * Click a word in the overlay by firing a mouseUp at the word's
+   * center in natural-pixel coords.
+   *
+   * Phase 2.2: Word selection uses the DOM event-capture overlay's
+   * mouseUp handler (hit-test in natural-pixel space). A mouseUp without
+   * a preceding mouseDown is treated as a simple click by the overlay.
+   *
+   * Word coords (natural px, matching makeWordRow):
+   *   w_alpha: left=0,   width=50  → center at x=25
+   *   w_beta:  left=60,  width=50  → center at x=85
+   *   w_gamma: left=120, width=50  → center at x=145
+   *
+   * With NATURAL.w=1000, overlay displayW=1000 → scaleX=1 → DOM=natural.
+   */
+  async function clickWordInOverlay(
+    overlay: HTMLElement,
+    naturalX: number,
+    naturalY: number,
+  ) {
+    fireEvent.mouseUp(overlay, { clientX: naturalX, clientY: naturalY });
   }
 
   function makeWordRow(id: string, x: number) {
@@ -430,18 +513,17 @@ describe("TextReviewPage §9a delete-words flow", () => {
       expect(el.value).toBe("alpha beta gamma\n");
     });
 
-    // Light up the bbox overlay.
-    fireImgLoad({ w: 1000, h: 100 });
-
-    // Three rects → one per OCR word.
-    const rects = await screen.findAllByTestId("konva-rect");
-    expect(rects).toHaveLength(3);
+    // Phase 2.2: The window.Image stub fires onload synchronously so
+    // naturalSize is set as soon as the useEffect runs. Wait for the
+    // event-capture overlay to appear (gates on naturalSize > 0 AND words > 0).
+    const overlay = await waitForOverlay();
 
     const user = userEvent.setup();
-    // Toggle-select the first two words.
-    // noUncheckedIndexedAccess: rects length checked above
-    await user.click(rects[0]!);
-    await user.click(rects[1]!);
+    // Toggle-select w_alpha (center x=25) and w_beta (center x=85).
+    // clientX/Y are in natural-pixel coords (scaleX=1 because overlay
+    // displayWidth matches naturalWidth=1000).
+    await clickWordInOverlay(overlay, 25, 10); // w_alpha
+    await clickWordInOverlay(overlay, 85, 10); // w_beta
 
     // The delete button label reflects selection size.
     await screen.findByRole("button", { name: /^Delete 2 words$/i });
@@ -541,10 +623,9 @@ describe("TextReviewPage §9a delete-words flow", () => {
       const el = document.querySelector("textarea")!;
       expect(el.value).toBe("alpha beta\n");
     });
-    fireImgLoad({ w: 1000, h: 100 });
 
-    const rects = await screen.findAllByTestId("konva-rect");
-    await user.click(rects[0]!); // noUncheckedIndexedAccess // select w_alpha
+    const overlay2 = await waitForOverlay();
+    await clickWordInOverlay(overlay2, 25, 10); // select w_alpha
 
     await screen.findByRole("button", { name: /^Delete 1 word$/i });
     fireEvent.keyDown(document.body, { key: "Delete", code: "Delete" });
@@ -608,14 +689,10 @@ describe("TextReviewPage §9a delete-words flow", () => {
       expect(el.value).toBe("alpha beta gamma\n");
     });
 
-    fireImgLoad({ w: 1000, h: 100 });
+    const overlay3 = await waitForOverlay();
 
-    const rects = await screen.findAllByTestId("konva-rect");
-    expect(rects).toHaveLength(3);
-
-    const user = userEvent.setup();
-    await user.click(rects[0]!); // noUncheckedIndexedAccess
-    await user.click(rects[1]!); // noUncheckedIndexedAccess
+    await clickWordInOverlay(overlay3, 25, 10); // w_alpha
+    await clickWordInOverlay(overlay3, 85, 10); // w_beta
 
     // Selection of two words → Delete button reflects size; Clear
     // button is now visible alongside it.
@@ -669,14 +746,11 @@ describe("TextReviewPage §9a delete-words flow", () => {
       expect(el.value).toBe("alpha beta gamma\n");
     });
 
-    fireImgLoad({ w: 1000, h: 100 });
-
-    const rects = await screen.findAllByTestId("konva-rect");
-    expect(rects).toHaveLength(3);
+    const overlay4 = await waitForOverlay();
 
     const user = userEvent.setup();
-    await user.click(rects[0]!); // noUncheckedIndexedAccess
-    await user.click(rects[1]!); // noUncheckedIndexedAccess
+    await clickWordInOverlay(overlay4, 25, 10); // w_alpha
+    await clickWordInOverlay(overlay4, 85, 10); // w_beta
 
     const clearBtn = await screen.findByRole("button", {
       name: /^Clear selection$/i,
@@ -784,7 +858,6 @@ describe("TextReviewPage §9a delete-words flow", () => {
       ),
     );
 
-    const user = userEvent.setup();
     const { unmount } = renderAtRoute(
       <TextReviewPage />,
       "/projects/prj_abc/pages/0/review",
@@ -794,10 +867,9 @@ describe("TextReviewPage §9a delete-words flow", () => {
       const el = document.querySelector("textarea")!;
       expect(el.value).toBe("alpha beta\n");
     });
-    fireImgLoad({ w: 1000, h: 100 });
 
-    const rects = await screen.findAllByTestId("konva-rect");
-    await user.click(rects[0]!); // noUncheckedIndexedAccess // select w_alpha
+    const overlay5 = await waitForOverlay();
+    await clickWordInOverlay(overlay5, 25, 10); // select w_alpha
 
     await screen.findByRole("button", { name: /^Delete 1 word$/i });
     fireEvent.keyDown(document.body, { key: "Delete", code: "Delete" });
@@ -867,17 +939,15 @@ describe("TextReviewPage §9a delete-words flow", () => {
       ),
     );
 
-    const user = userEvent.setup();
     renderAtRoute(<TextReviewPage />, "/projects/prj_abc/pages/0/review");
 
     await waitFor(() => {
       const el = document.querySelector("textarea")!;
       expect(el.value).toBe("alpha beta gamma\n");
     });
-    fireImgLoad({ w: 1000, h: 100 });
 
-    const rects = await screen.findAllByTestId("konva-rect");
-    await user.click(rects[0]!); // noUncheckedIndexedAccess // select w_alpha
+    const overlay6 = await waitForOverlay();
+    await clickWordInOverlay(overlay6, 25, 10); // select w_alpha
 
     await screen.findByRole("button", { name: /^Delete 1 word$/i });
     fireEvent.keyDown(document.body, { key: "Delete", code: "Delete" });
@@ -895,8 +965,10 @@ describe("TextReviewPage §9a delete-words flow", () => {
     // First undo banner appears after server confirms.
     await screen.findByTestId("undo-banner");
 
-    // Select second word and trigger delete again while first window is open.
-    await user.click(rects[1]!); // noUncheckedIndexedAccess // select w_beta (adds to selection)
+    // Select w_beta and trigger delete again while first window is open.
+    // After w_alpha is deleted, the overlay re-renders with remaining words.
+    // w_beta is at left=60, width=50 → click at x=85.
+    await clickWordInOverlay(overlay6, 85, 10); // select w_beta
     fireEvent.keyDown(document.body, { key: "Delete", code: "Delete" });
 
     // Second DELETE fires immediately too.

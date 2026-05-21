@@ -82,11 +82,12 @@ export function TextReviewPage() {
     null,
   );
 
-  // Image-load state drives the overlay sizing — Konva Stage waits
-  // until the <img> has rendered so we know natural & rendered sizes.
+  // Phase 2.2: imgEl ref removed — pd-ui PageImageCanvas (inside
+  // WordBboxOverlay) manages the <img> element. naturalSize is still
+  // tracked here so we can pass page.width/height to pd-ui's canvas;
+  // we preload the image via useEffect + new Image() instead of <img onLoad>.
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const selectDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [imgEl, setImgEl] = useState<HTMLImageElement | null>(null);
   const [naturalSize, setNaturalSize] = useState<{ w: number; h: number }>({
     w: 0,
     h: 0,
@@ -159,6 +160,27 @@ export function TextReviewPage() {
     () => buildWordOffsetIndex(text, words),
     [text, words],
   );
+
+  // Phase 2.2: Preload the page image to discover its natural dimensions
+  // so we can pass page.width/height to pd-ui's PageImageCanvas (via
+  // WordBboxOverlay). We can't use <img onLoad> any more because the
+  // <img> element is now managed internally by pd-ui's canvas.
+  // naturalSize.w===0 means "not yet loaded" — WordBboxOverlay early-
+  // returns null in that case, which is the same guard it had before.
+  useEffect(() => {
+    if (!page.data) return;
+    const key = page.data.processed_image_key ?? page.data.thumbnail_key;
+    if (!key) return;
+    const url = `/cdn/${key}`;
+    const img = new Image();
+    img.onload = () => {
+      setNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
+    };
+    img.src = url;
+    return () => {
+      img.onload = null;
+    };
+  }, [page.data]);
 
   const save = useMutation({
     mutationFn: () => {
@@ -518,71 +540,59 @@ export function TextReviewPage() {
       )}
 
       <div className="grid gap-3 lg:grid-cols-2">
-        {/* Left pane: Konva canvas / image + word overlay */}
-        <Card className="overflow-hidden">
+        {/* Left pane: pd-ui PageImageCanvas + word bbox overlay.
+            Phase 2.2: the separate <img> + absolutely-positioned Konva
+            Stage are replaced by WordBboxOverlay which wraps pd-ui's
+            PageImageCanvas (image layer + slot fills). */}
+        <Card className="overflow-hidden" style={{ minHeight: 400 }}>
           {imageKey ? (
-            <div className="relative inline-block w-full">
-              <img
-                ref={setImgEl}
-                src={`/cdn/${imageKey}`}
-                alt={page.data.prefix}
-                className="max-h-[80vh] w-full object-contain"
-                onLoad={(e) => {
-                  const el = e.currentTarget;
-                  setNaturalSize({
-                    w: el.naturalWidth,
-                    h: el.naturalHeight,
-                  });
-                }}
-              />
-              <WordBboxOverlay
-                naturalWidth={naturalSize.w}
-                naturalHeight={naturalSize.h}
-                words={words}
-                activeWordIndex={activeWordIndex}
-                onWordClick={handleWordClick}
-                selectedWordIds={selectedWordIds}
-                onWordToggleSelect={(id) => {
-                  setSelectedWordIds((prev) => {
-                    const next = new Set(prev);
-                    if (next.has(id)) next.delete(id);
-                    else next.add(id);
-                    setLiveMessage(
-                      next.size === 0
-                        ? "Cleared selection"
-                        : `${next.size} word${next.size === 1 ? "" : "s"} selected`,
-                    );
-                    return next;
-                  });
-                }}
-                onMarqueeSelect={(ids, additive) => {
-                  // §9a marquee: shift-drag adds to the existing
-                  // selection (typical multi-rect editor UX); a plain
-                  // drag replaces it entirely. Empty marquees are
-                  // suppressed inside the overlay so this fires only
-                  // for real drags — a click on empty canvas in
-                  // "replace" mode therefore cannot accidentally
-                  // wipe a careful per-word selection (see overlay's
-                  // zero-area suppression).
-                  setSelectedWordIds((prev) => {
-                    let next: Set<string>;
-                    if (additive) {
-                      next = new Set(prev);
-                      for (const id of ids) next.add(id);
-                    } else {
-                      next = new Set(ids);
-                    }
-                    setLiveMessage(
-                      next.size === 0
-                        ? "Cleared selection"
-                        : `${next.size} word${next.size === 1 ? "" : "s"} selected`,
-                    );
-                    return next;
-                  });
-                }}
-                trackElement={imgEl}
-              />
-            </div>
+            <WordBboxOverlay
+              imageUrl={`/cdn/${imageKey}`}
+              naturalWidth={naturalSize.w}
+              naturalHeight={naturalSize.h}
+              words={words}
+              activeWordIndex={activeWordIndex}
+              onWordClick={handleWordClick}
+              selectedWordIds={selectedWordIds}
+              onWordToggleSelect={(id) => {
+                setSelectedWordIds((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(id)) next.delete(id);
+                  else next.add(id);
+                  setLiveMessage(
+                    next.size === 0
+                      ? "Cleared selection"
+                      : `${next.size} word${next.size === 1 ? "" : "s"} selected`,
+                  );
+                  return next;
+                });
+              }}
+              onMarqueeSelect={(ids, additive) => {
+                // §9a marquee: shift-drag adds to the existing
+                // selection (typical multi-rect editor UX); a plain
+                // drag replaces it entirely. Empty marquees are
+                // suppressed inside the overlay so this fires only
+                // for real drags — a click on empty canvas in
+                // "replace" mode therefore cannot accidentally
+                // wipe a careful per-word selection (see overlay's
+                // zero-area suppression).
+                setSelectedWordIds((prev) => {
+                  let next: Set<string>;
+                  if (additive) {
+                    next = new Set(prev);
+                    for (const id of ids) next.add(id);
+                  } else {
+                    next = new Set(ids);
+                  }
+                  setLiveMessage(
+                    next.size === 0
+                      ? "Cleared selection"
+                      : `${next.size} word${next.size === 1 ? "" : "s"} selected`,
+                  );
+                  return next;
+                });
+              }}
+            />
           ) : (
             <div className="flex h-96 items-center justify-center text-ink-3">
               no image
