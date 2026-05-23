@@ -2975,7 +2975,7 @@ export interface operations {
     get_page_stage_artifact: {
         parameters: {
             query?: {
-                v?: string | null;
+                _v?: string | null;
             };
             header?: {
                 "If-None-Match"?: string | null;
