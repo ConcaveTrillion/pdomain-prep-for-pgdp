@@ -17,7 +17,7 @@ else
         uninstall-local check-local-editable run run-cpu run-local frontend-install \
         frontend-build frontend-dev frontend-test frontend-knip openapi-export upgrade-pd-book-tools \
         release-patch release-minor release-major _do-release docker-build docker-run \
-        mise-download mise-setup mise-doctor upgrade-deps
+        mise-download mise-trust-worktrees mise-setup mise-doctor upgrade-deps
 
 # ---------------------------------------------------------------------------
 # Peer-repo discovery for *-local targets
@@ -134,10 +134,10 @@ upgrade-pd-book-tools: ## Pin pd-book-tools to its latest GitHub tag
 
 # Resolve mise: PATH first, then the standard local-install location.
 MISE := $(shell command -v mise 2>/dev/null || echo $$HOME/.local/bin/mise)
+WORKSPACE_ROOT := $(abspath $(CURDIR)/..)
 HAVE_MISE = [ -x "$(MISE)" ]
-# Use the pinned Node toolchain without loading this checkout's mise.toml.
-# Fresh worktrees should not need a per-path `mise trust` just to run hooks.
-MISE_NODE_RUN = $(MISE) --no-config exec node@24 --
+# Run a command through mise if available, fall through to bare PATH otherwise.
+MISE_RUN = if $(HAVE_MISE); then $(MISE) exec --; fi
 
 mise-download: ## [optional] Download the mise binary only (no shell init, no tools yet)
 	@if $(HAVE_MISE); then \
@@ -149,7 +149,19 @@ mise-download: ## [optional] Download the mise binary only (no shell init, no to
 		echo "✅ mise downloaded. Run 'make mise-setup' next to install pinned tools."; \
 	fi
 
-mise-setup: mise-download ## [optional] Download mise + install pinned tools from mise.toml
+mise-trust-worktrees: mise-download ## [optional] Trust repo + generated worktree roots for mise
+	@echo "🔐 Trusting mise config roots for this repo and generated worktrees..."
+	@mkdir -p "$$HOME/.config/mise/conf.d"
+	@printf '%s\n' \
+		'[settings]' \
+		'trusted_config_paths = [' \
+		'    "$(WORKSPACE_ROOT)",' \
+		'    "/srv/bot-workspaces",' \
+		']' \
+		> "$$HOME/.config/mise/conf.d/ocr-container-worktrees.toml"
+	@echo "✅ mise trust roots configured."
+
+mise-setup: mise-download mise-trust-worktrees ## [optional] Download mise + install pinned tools from mise.toml
 	@echo "🔧 Installing tools from mise.toml..."
 	@$(MISE) install
 	@echo ""
@@ -181,8 +193,8 @@ mise-doctor: ## [optional] Show resolved tool versions (mise binary + PATH fallb
 # Run pnpm through mise if available, else use PATH pnpm directly.
 define _pnpm
 	if $(HAVE_MISE); then \
-		echo "  (via $(MISE) exec --no-config node@24)"; \
-		cd frontend && $(MISE_NODE_RUN) pnpm $(1); \
+		echo "  (via $(MISE) exec)"; \
+		cd frontend && $(MISE) exec -- pnpm $(1); \
 	elif command -v pnpm >/dev/null 2>&1; then \
 		cd frontend && pnpm $(1); \
 	else \
@@ -248,7 +260,7 @@ openapi-export: ## Regenerate openapi.json + frontend/src/api/types.gen.ts
 	# so we can audit the diff and migrate surfaces deliberately (P4 #20).
 	uv run python scripts/export_openapi.py openapi.json
 	@if $(HAVE_MISE); then \
-		cd frontend && $(MISE_NODE_RUN) npx --yes openapi-typescript ../openapi.json -o src/api/types.gen.ts; \
+		cd frontend && $(MISE) exec -- npx --yes openapi-typescript ../openapi.json -o src/api/types.gen.ts; \
 	else \
 		cd frontend && npx --yes openapi-typescript ../openapi.json -o src/api/types.gen.ts; \
 	fi
