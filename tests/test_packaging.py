@@ -237,3 +237,82 @@ async def test_oxipng_skip_zero_when_optimize_disabled(tmp_path) -> None:
     result = await build_package(project=project, pages=pages, storage=storage, optimize_png=False)
 
     assert result.oxipng_skipped_pages == 0
+
+
+# ---------------------------------------------------------------------------
+# Slice 1 — _safe_package_slug unit tests (TDD: written before implementation)
+# ---------------------------------------------------------------------------
+
+from pd_prep_for_pgdp.core.packaging import _safe_package_slug  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    ("book_name", "fallback", "expected"),
+    [
+        # Path traversal: slashes become _, dots collapse, strip leaves clean name
+        ("../../evil", "proj123", "evil"),
+        # All-separator: nothing survives, fallback used
+        ("../../../", "proj123", "proj123"),
+        # Only dots and spaces: strip leaves empty, fallback used
+        ("  .  ", "proj123", "proj123"),
+        # Normal book name passes through unchanged
+        ("My Book", "proj123", "My Book"),
+        # Single internal slash becomes underscore
+        ("book/name", "proj123", "book_name"),
+        # Control character removed
+        ("\x00title", "proj123", "title"),
+        # Non-ASCII Unicode (é) removed — [a-zA-Z0-9] not \w
+        ("café", "proj123", "caf"),
+    ],
+)
+def test_safe_package_slug_parametrized(book_name: str, fallback: str, expected: str) -> None:
+    assert _safe_package_slug(book_name, fallback) == expected
+
+
+def test_safe_package_slug_rejects_traversal() -> None:
+    slug = _safe_package_slug("../../evil", fallback="proj123")
+    assert "/" not in slug
+    assert "\\" not in slug
+    assert not slug.startswith(".")
+    assert not slug.startswith("_")
+    assert slug == "evil"
+    assert slug  # non-empty
+
+
+def test_safe_package_slug_traversal_book_name_stays_in_for_zip() -> None:
+    slug = _safe_package_slug("../../evil", fallback="proj123")
+    project_id = "proj123"
+    key = f"projects/{project_id}/for_zip/{slug}.zip"
+    assert key.startswith(f"projects/{project_id}/for_zip/")
+
+
+def test_safe_package_slug_strips_unicode_word_chars() -> None:
+    # \w in Python 3 matches Unicode; the safe set must use [a-zA-Z0-9...] instead
+    slug = _safe_package_slug("café", fallback="proj123")
+    assert slug == "caf"  # 'é' (non-ASCII) removed
+
+
+# ---------------------------------------------------------------------------
+# Slice 3 — end-to-end packaging with traversal book_name
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_build_package_traversal_book_name(tmp_path) -> None:
+    """A traversal book_name must produce a safe key under for_zip/, not escape it."""
+    storage = FilesystemStorage(root=tmp_path)
+    project = _project("proj123")
+    # Override book_name with a path traversal value
+    project.config.book_name = "../../evil"
+    pages = [_page("proj123", idx0=0, prefix="p001")]
+    for output in pages[0].outputs:
+        await storage.put_bytes(output.for_zip_image_key, b"\x89PNG-fake")
+        await storage.put_bytes(output.for_zip_text_key, b"text")
+
+    result = await build_package(project=project, pages=pages, storage=storage)
+
+    # The key must be under the project's for_zip/ prefix, not escaped.
+    assert result.package_key == "projects/proj123/for_zip/evil.zip"
+    assert result.package_key.startswith("projects/proj123/for_zip/")
+    # The file must exist at the safe key.
+    assert await storage.exists(result.package_key)
