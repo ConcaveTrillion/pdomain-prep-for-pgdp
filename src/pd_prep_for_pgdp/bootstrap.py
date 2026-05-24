@@ -402,8 +402,6 @@ def _mount_static_frontend(app: FastAPI, settings: Settings) -> None:
         log.warning("Static frontend bundle not found — / will 404 until built")
         return
 
-    import os
-
     if not os.path.isdir(path):
         log.warning("Static dir %s missing — frontend not bundled. Run `make build-frontend`.", path)
         return
@@ -418,9 +416,9 @@ def _mount_static_frontend(app: FastAPI, settings: Settings) -> None:
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_fallback(full_path: str):
-        candidate = os.path.join(path, full_path)
-        if full_path and os.path.isfile(candidate):
-            return FileResponse(candidate)
+        safe = _safe_static_file(path, full_path) if full_path else None
+        if safe is not None:
+            return FileResponse(safe)
         return FileResponse(index_file)
 
     app.mount("/", StaticFiles(directory=path, html=True), name="ui")

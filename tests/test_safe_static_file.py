@@ -1,15 +1,64 @@
-"""Unit tests for _safe_static_file — path-traversal containment helper.
+"""Unit tests for _safe_static_file and HTTP-level traversal regression tests.
 
-These tests run WITHOUT a built SPA bundle (pure Python, no FastAPI server).
-They prove the helper rejects absolute paths and traversal segments before
-any file is served.
+All tests here run WITHOUT a real built SPA bundle — a minimal fake static
+root (index.html only) is created via tmp_path and monkeypatched into the
+bootstrap's importlib.resources call so the FastAPI app mounts it correctly.
 """
 
 from __future__ import annotations
 
-import pytest
+from typing import TYPE_CHECKING
+from unittest.mock import MagicMock
 
-from pd_prep_for_pgdp.bootstrap import _safe_static_file
+import pytest
+from fastapi.testclient import TestClient
+
+import pd_prep_for_pgdp.bootstrap as bootstrap_mod
+from pd_prep_for_pgdp.bootstrap import _safe_static_file, build_app
+from pd_prep_for_pgdp.settings import Settings
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Fixture: fake static dir with a minimal index.html
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def fake_static(tmp_path: Path) -> Path:
+    """Return a tmp_path directory wired to look like a built SPA bundle."""
+    static = tmp_path / "static"
+    static.mkdir()
+    (static / "index.html").write_text("<div id='root'></div>")
+    assets = static / "assets"
+    assets.mkdir()
+    (assets / "app.js").write_text("console.log('ok')")
+    return static
+
+
+@pytest.fixture
+def test_app(fake_static: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Build a FastAPI app that mounts the fake static dir."""
+
+    # Monkeypatch resources.files so _mount_static_frontend resolves to fake_static.
+    fake_traversable = MagicMock()
+    fake_traversable.joinpath.return_value = MagicMock(__str__=lambda self: str(fake_static))
+    monkeypatch.setattr(bootstrap_mod.resources, "files", lambda _pkg: fake_traversable)
+
+    settings = Settings(
+        host="127.0.0.1",
+        port=8765,
+        data_root=tmp_path / "data",
+        config_dir=tmp_path / "config",
+        storage_backend="filesystem",
+        database_url=f"sqlite:///{(tmp_path / 's.db').as_posix()}",
+        gpu_backend="cpu",
+        dispatch_interval_seconds=0,
+        auth_mode="none",
+    )
+    return build_app(settings)
+
 
 # ---------------------------------------------------------------------------
 # Rejection cases — must return None
@@ -113,3 +162,47 @@ def test_parametrized_traversal_attacks(tmp_path, full_path: str) -> None:
     """Parametrized sweep of common path-traversal attack strings."""
     result = _safe_static_file(str(tmp_path), full_path)
     assert result is None, f"Expected None for {full_path!r}, got {result!r}"
+
+
+# ---------------------------------------------------------------------------
+# HTTP-level regression tests — traversal attacks via the FastAPI route
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "attack_path",
+    [
+        # URL-decoded absolute path (FastAPI decodes %2Fetc%2Fpasswd before handler)
+        "%2Fetc%2Fpasswd",
+        # Dotdot traversal
+        "../etc/passwd",
+        "../../etc/passwd",
+    ],
+)
+def test_http_traversal_returns_index_not_host_file(test_app, attack_path: str) -> None:
+    """Attack paths must return the SPA index.html (200 HTML), never host file content."""
+    with TestClient(test_app, raise_server_exceptions=False) as client:
+        r = client.get(f"/{attack_path}", follow_redirects=False)
+        # The fallback must serve index.html (200 HTML), not the host file.
+        assert r.status_code == 200
+        assert "text/html" in r.headers.get("content-type", "")
+        # Must not contain /etc/passwd content.
+        assert "root:" not in r.text
+        assert "<div id='root'>" in r.text
+
+
+def test_http_valid_asset_still_served(test_app) -> None:
+    """A real bundled asset (assets/app.js) must still be served correctly."""
+    with TestClient(test_app) as client:
+        r = client.get("/assets/app.js")
+        assert r.status_code == 200
+        assert "text/html" not in r.headers.get("content-type", "")
+
+
+def test_http_spa_router_path_serves_index(test_app) -> None:
+    """A React Router path (/projects/123) must serve index.html."""
+    with TestClient(test_app) as client:
+        r = client.get("/projects/abc-123")
+        assert r.status_code == 200
+        assert "text/html" in r.headers.get("content-type", "")
+        assert "<div id='root'>" in r.text
