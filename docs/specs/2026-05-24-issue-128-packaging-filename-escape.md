@@ -112,20 +112,31 @@ Add `_safe_package_slug(book_name: str, fallback: str) -> str` to
 ```python
 import re
 
-_UNSAFE_CHARS = re.compile(r'[^\w\-.()\[\] ]')  # keep: word chars, hyphen, dot, parens, space
+# Keep only ASCII alphanumeric, underscore, hyphen, dot, parens, brackets, space.
+# Using [a-zA-Z0-9_] rather than \w to exclude Unicode word characters — the
+# stated goal is "ASCII safe-slug only" and \w in Python 3 matches all Unicode
+# letters/digits, which would allow non-ASCII chars to pass silently.
+_UNSAFE_CHARS = re.compile(r'[^a-zA-Z0-9_\-.()\[\] ]')
 
 def _safe_package_slug(book_name: str, fallback: str) -> str:
-    """Return a filesystem-safe slug for use in a storage key.
+    """Return a filesystem-safe ASCII slug for use in a storage key.
 
-    Strips path separators, control chars, and OS-reserved characters.
+    Strips path separators, control chars, OS-reserved characters, and
+    consecutive dot sequences that could form relative-path components (e.g. ..).
     Falls back to `fallback` (typically project.id) if the result is empty.
     """
-    # Collapse any path separators to underscore
+    # Replace path separators with underscore
     name = re.sub(r'[\\/]', '_', book_name)
-    # Remove remaining unsafe characters
+    # Remove remaining unsafe characters (anything not in the ASCII safe set)
     name = _UNSAFE_CHARS.sub('', name)
-    # Remove leading/trailing dots and whitespace (hides files, Windows reserved)
-    name = name.strip('. ')
+    # Collapse consecutive dots (e.g. ".." from "../../" → ".") so that
+    # slash-replaced underscores between dot groups cannot re-form ".." after strip.
+    name = re.sub(r'\.{2,}', '.', name)
+    # Strip leading/trailing dots, spaces, and underscores.
+    # Dots: hidden-file prefix on POSIX, Windows reserved.
+    # Leading underscores: left over from stripped path separators (e.g. "../../evil"
+    # → ".._.._evil" → after filter+collapse → "._._evil" → strip → "evil").
+    name = name.strip('. _')
     return name if name else fallback
 ```
 
@@ -155,13 +166,23 @@ can construct the correct URL without re-running the slug logic.
 
 **Slice 1 — `_safe_package_slug` unit tests + implementation (TDD):**
 
-- `tests/test_packaging.py`: parametrized over:
-  - `"../../evil"` → `"..evil"` → after strip-dots → `"evil"` (no separators, no leading dots)
-  - `"My Book"` → `"My Book"` (unchanged)
-  - `"book/name"` → `"book_name"` (slash → underscore)
-  - `"../../../"` → after strip-separators and strip-dots → fallback project ID
-  - `"  .  "` → fallback (only dots and spaces)
-  - Control characters `"\x00title"` → `"title"`
+- `tests/test_packaging.py`: parametrized over (showing the transformation chain):
+  - `"../../evil"`:
+    slash→`_`: `".._.._evil"` →
+    char filter: unchanged →
+    collapse `..`: `"._._evil"` →
+    `strip('. _')`: `"evil"` ✓
+  - `"My Book"` → all steps pass through → `"My Book"` (unchanged)
+  - `"book/name"` → slash→`_`: `"book_name"` → no further change → `"book_name"`
+  - `"../../../"`:
+    slash→`_`: `".._.._.._"` →
+    char filter: unchanged →
+    collapse `..`: `"._._._"` →
+    `strip('. _')`: `""` → fallback project ID
+  - `"  .  "` → strip: `""` → fallback (only dots and spaces)
+  - Control characters `"\x00title"` → char filter removes `\x00` → `"title"`
+  - Unicode word char `"café"` → char filter removes `é` (non-ASCII) → `"caf"`
+    (demonstrates `[a-zA-Z0-9_]` tightening vs `\w`)
 - Implement `_safe_package_slug` in `packaging.py`.
 
 **Slice 2 — Wire into packaging + assertion:**
@@ -183,6 +204,8 @@ def test_safe_package_slug_rejects_traversal():
     assert "/" not in slug
     assert "\\" not in slug
     assert not slug.startswith(".")
+    assert not slug.startswith("_")   # no leading underscores from stripped slashes
+    assert slug == "evil"             # exact expected output after full transform chain
     assert slug  # non-empty
 
 def test_safe_package_slug_traversal_book_name_stays_in_for_zip(tmp_path):
@@ -191,10 +214,30 @@ def test_safe_package_slug_traversal_book_name_stays_in_for_zip(tmp_path):
     project_id = "proj123"
     key = f"projects/{project_id}/for_zip/{slug}.zip"
     assert key.startswith(f"projects/{project_id}/for_zip/")
+
+def test_safe_package_slug_strips_unicode_word_chars():
+    # \w in Python 3 matches Unicode; [a-zA-Z0-9_] must be used instead
+    slug = _safe_package_slug("café", fallback="proj123")
+    assert slug == "caf"   # 'é' (non-ASCII) is removed; not "café"
 ```
 
 Before the fix, `_safe_package_slug` does not exist and the key is `projects/proj123/for_zip/../../evil.zip`
 which does not start with `projects/proj123/for_zip/`.
+
+**Transformation chain reminder for `"../../evil"` (the tricky case):**
+
+```
+"../../evil"
+  → slash→_ :       ".._.._evil"
+  → char filter:    ".._.._evil"   (unchanged — dots and _ are both in safe set)
+  → collapse ..:    "._._evil"     (each ".." → ".")
+  → strip('. _'):   "evil"         (leading ., _, . stripped left-to-right)
+```
+
+The intermediate `".._..evil"` or `"..evil"` (which earlier versions of this spec showed) was
+incorrect because the `_` characters from slash substitution were not accounted for before the
+strip step. The added `.strip('. _')` (underscore included) and `re.sub(r'\.{2,}', '.', name)`
+collapse step make the correct output `"evil"`, not `"__evil"` or `"_.._evil"`.
 
 **Regression:**
 
