@@ -181,7 +181,15 @@ async def build_package(
         zf.writestr("pgdp.json", json.dumps(manifest, indent=2))
 
     package_bytes = buf.getvalue()
-    package_key = f"projects/{project.id}/for_zip/{project.config.book_name}.zip"
+    slug = _safe_package_slug(project.config.book_name, fallback=project.id)
+    package_key = f"projects/{project.id}/for_zip/{slug}.zip"
+    # Belt-and-suspenders: assert the key stays under this project's prefix.
+    # _safe_package_slug guarantees no path separators in the slug, but we
+    # verify explicitly so any future regression is caught immediately.
+    # Imported inline to avoid a circular import chain through api/data/__init__.py.
+    from pd_prep_for_pgdp.api.data.storage_keys import assert_project_scoped_key
+
+    assert_project_scoped_key(project.id, package_key)
     await storage.put_bytes(package_key, package_bytes, "application/zip")
 
     return PackagingResult(
