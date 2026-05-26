@@ -36,12 +36,15 @@ describe("@pdomain/pdomain-ui pin (meta #293)", () => {
     expect(pin).not.toBe("0.2.0");
   });
 
-  it("pins at least 0.2.1 (or uses a local path dep for rename worktree)", () => {
-    // Accept either a semver range >= 0.2.1 (registry install) or a file:
-    // path pointing at the rename worktree (Phase 2 local-dev only).
+  it("pins at least 0.2.1 as a semver range (no file: path deps — registry is live)", () => {
+    // Phase 4.5: @pdomain/pdomain-ui@0.2.2 is published to pdomain-index-npm.
+    // file: path deps are no longer acceptable. Only semver ranges are valid.
     expect(pin).toBeDefined();
-    const isSemver = /\^0\.2\.[1-9]\d*/.test(pin ?? "");
-    const isLocalPath = (pin ?? "").startsWith("file:");
-    expect(isSemver || isLocalPath).toBe(true);
+    expect((pin ?? "").startsWith("file:")).toBe(false);
+    const isSemver = /^\^?\d+\.\d+\.\d+/.test(pin ?? "");
+    expect(isSemver).toBe(true);
+    // Floor: must be at least 0.2.1 (fixes jsx-dev-runtime bundling crash).
+    const isSufficientVersion = /\^0\.2\.[1-9]\d*/.test(pin ?? "");
+    expect(isSufficientVersion).toBe(true);
   });
 });
