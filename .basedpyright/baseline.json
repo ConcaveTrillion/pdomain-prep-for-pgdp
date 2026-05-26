@@ -48,10 +48,50 @@
         ],
         "./src/pd_prep_for_pgdp/api/cdn.py": [
             {
+                "code": "reportUnusedParameter",
+                "range": {
+                    "startColumn": 4,
+                    "endColumn": 8,
+                    "lineCount": 1
+                }
+            },
+            {
                 "code": "reportCallInDefaultInitializer",
                 "range": {
                     "startColumn": 24,
                     "endColumn": 44,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportCallInDefaultInitializer",
+                "range": {
+                    "startColumn": 25,
+                    "endColumn": 46,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnnecessaryIsInstance",
+                "range": {
+                    "startColumn": 37,
+                    "endColumn": 67,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportCallInDefaultInitializer",
+                "range": {
+                    "startColumn": 24,
+                    "endColumn": 44,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportCallInDefaultInitializer",
+                "range": {
+                    "startColumn": 20,
+                    "endColumn": 41,
                     "lineCount": 1
                 }
             },
@@ -76,6 +116,38 @@
                 "range": {
                     "startColumn": 4,
                     "endColumn": 22,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnknownParameterType",
+                "range": {
+                    "startColumn": 23,
+                    "endColumn": 26,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportMissingParameterType",
+                "range": {
+                    "startColumn": 23,
+                    "endColumn": 26,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnknownMemberType",
+                "range": {
+                    "startColumn": 4,
+                    "endColumn": 22,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnknownMemberType",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 26,
                     "lineCount": 1
                 }
             }
@@ -1046,6 +1118,22 @@
         ],
         "./src/pd_prep_for_pgdp/core/ingest.py": [
             {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 20,
+                    "endColumn": 68,
+                    "lineCount": 3
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 20,
+                    "endColumn": 91,
+                    "lineCount": 2
+                }
+            },
+            {
                 "code": "reportAny",
                 "range": {
                     "startColumn": 8,
@@ -1194,10 +1282,26 @@
                 }
             },
             {
+                "code": "reportPrivateUsage",
+                "range": {
+                    "startColumn": 14,
+                    "endColumn": 24,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateUsage",
+                "range": {
+                    "startColumn": 27,
+                    "endColumn": 37,
+                    "lineCount": 1
+                }
+            },
+            {
                 "code": "reportAny",
                 "range": {
-                    "startColumn": 21,
-                    "endColumn": 41,
+                    "startColumn": 29,
+                    "endColumn": 32,
                     "lineCount": 1
                 }
             },
