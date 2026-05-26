@@ -435,6 +435,14 @@ async def _enumerate_zip(
         resolved = limits
     _check_zip_limits(raw, resolved)
     out: list[_SourceEntry] = []
+    # Track stems that have already been assigned to detect sanitisation
+    # collisions (e.g. ``a/img.jpg`` and ``a__img.jpg`` both map to
+    # ``a__img``).  The happy path — two entries in different subdirs with
+    # the same basename — is handled by ``_stem_from_zip_path`` producing
+    # distinct stems (``001__img`` vs ``002__img``).  The collision counter
+    # is only reached in the pathological case where the sanitised stems
+    # themselves clash.
+    seen_stems: set[str] = set()
     with zipfile.ZipFile(io.BytesIO(raw)) as zf:
         for info in zf.infolist():
             if info.is_dir():
@@ -444,7 +452,23 @@ async def _enumerate_zip(
             if ext not in _IMAGE_EXTS:
                 continue
             data = zf.read(info)
-            stem = _stem_from_zipname(name)
+            stem = _stem_from_zip_path(name)
+            # Resolve sanitisation collisions with a deterministic counter
+            # suffix so no entry is silently overwritten.
+            if stem in seen_stems:
+                counter = 2
+                candidate = f"{stem}_{counter}"
+                while candidate in seen_stems:
+                    counter += 1
+                    candidate = f"{stem}_{counter}"
+                log.warning(
+                    "ZIP stem collision: %r already used; remapping %r → %r",
+                    stem,
+                    name,
+                    candidate,
+                )
+                stem = candidate
+            seen_stems.add(stem)
             target_key = f"projects/{project_id}/source/{stem}{ext}"
             await storage.put_bytes(target_key, data)
             out.append(_SourceEntry(key=target_key, stem=stem, bytes_=data))
@@ -542,11 +566,45 @@ def _ext_lower(name: str) -> str:
 
 
 def _stem_from_zipname(name: str) -> str:
-    """Last path segment without extension."""
+    """Last path segment without extension.
+
+    Used for folder entries where the storage key is already unique (the full
+    object key acts as the source of truth).  For ZIP entries use
+    ``_stem_from_zip_path`` instead, which preserves directory components so
+    that two files with the same basename in different subdirs produce distinct
+    stems.
+    """
     segment = name.replace("\\", "/").rsplit("/", 1)[-1]
     if "." in segment:
         segment = segment.rsplit(".", 1)[0]
     return segment
+
+
+def _stem_from_zip_path(name: str) -> str:
+    """Full relative ZIP path converted to a flat, safe stem.
+
+    Replaces the path separator (``/``) with a double-underscore (``__``) so
+    that ``001/img.jpg`` and ``002/img.jpg`` produce distinct stems
+    (``001__img`` and ``002__img``) rather than both collapsing to ``img``.
+
+    Backslashes are normalised to forward slashes first (Windows-created ZIPs
+    sometimes use them).  The final component's extension is stripped.
+
+    Examples
+    --------
+    >>> _stem_from_zip_path("page0001.png")
+    'page0001'
+    >>> _stem_from_zip_path("imgs/page0001.png")
+    'imgs__page0001'
+    >>> _stem_from_zip_path("vol1/ch2/page0001.jpg")
+    'vol1__ch2__page0001'
+    """
+    normalised = name.replace("\\", "/")
+    # Strip the extension from the last component only.
+    if "." in normalised.rsplit("/", 1)[-1]:
+        normalised = normalised.rsplit(".", 1)[0]
+    # Flatten the path hierarchy with a safe double-underscore separator.
+    return normalised.replace("/", "__")
 
 
 # ─── thumbnail (in-memory bytes -> bytes) ──────────────────────────────────
