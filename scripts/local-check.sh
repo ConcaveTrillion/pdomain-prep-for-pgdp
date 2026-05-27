@@ -49,8 +49,16 @@ if [[ -d "$REPO_ROOT/frontend" ]]; then
   for s in "${NPM_SIBLINGS[@]}"; do
     pkg_dir="$REPO_ROOT/frontend/node_modules/@pdomain/$s"
     if [[ -L "$pkg_dir" ]]; then
-      target=$(readlink -f "$pkg_dir")
-      say "  ✓ @pdomain/$s linked → $target"
+      target=$(readlink -f "$pkg_dir" 2>/dev/null || true)
+      expected="$WORKSPACE_ROOT/$s"
+      # pnpm resolves workspace deps through .pnpm/.../node_modules/.
+      # A real workspace link resolves OUTSIDE the consumer's node_modules.
+      if [[ "$target" == "$expected" || "$target" == "$expected"/* ]]; then
+        say "  ✓ @pdomain/$s linked → $target"
+      else
+        ver=$(jq -r .version "$target/package.json" 2>/dev/null || echo "unknown")
+        say "  → @pdomain/$s registry version $ver (link resolves to pnpm store: $target)"
+      fi
     elif [[ -d "$pkg_dir" ]]; then
       ver=$(jq -r .version "$pkg_dir/package.json" 2>/dev/null || echo "unknown")
       say "  → @pdomain/$s registry version $ver"
